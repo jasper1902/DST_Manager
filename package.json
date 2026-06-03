@@ -1,0 +1,23 @@
+{
+  "name": "dst-manager",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Don't Starve Together dedicated server manager controlled via Discord (bun + Windows)",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts",
+    "register": "bun run src/discord/register.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "bun build --compile --minify --sourcemap --target=bun-windows-x64 ./src/index.ts --outfile dst-manager.exe"
+  },
+  "dependencies": {
+    "discord.js": "^14.26.0",
+    "ini": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/ini": "^4.1.1",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}
