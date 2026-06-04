@@ -8,6 +8,7 @@ import {
 import type { AppConfig } from "../config.js";
 import { showConfig } from "../dst/clusterConfig.js";
 import type { DSTManager, ShardStatus } from "../dst/manager.js";
+import type { ModEntry } from "../dst/mods.js";
 
 /** marker ซ่อนใน footer ไว้ค้น message เดิมตอน bot รีสตาร์ท (กันส่งซ้ำ) */
 const MARKER = "DST-MANAGER-STATUS";
@@ -15,6 +16,14 @@ const MARKER = "DST-MANAGER-STATUS";
 const COLOR_ONLINE = 0x57f287;
 const COLOR_OFFLINE = 0xed4245;
 const COLOR_PARTIAL = 0xfee75c;
+const COLOR_MODS = 0x5865f2;
+
+/** ลิมิต Discord: 10 embeds/ข้อความ, รวมทุก embed ≤ 6000 ตัว, description ≤ 4096 */
+const MAX_EMBEDS = 10;
+/** ความยาว description ต่อ embed ม็อด (เผื่อ margin จาก 4096) */
+const MOD_EMBED_CHARS = 3900;
+/** งบรวมสำหรับ embed ม็อดทั้งหมด (เผื่อ status embed ใน 6000) */
+const MODS_TOTAL_BUDGET = 4800;
 
 const STATE_ICON: Record<string, string> = {
   running: "🟢",
@@ -42,6 +51,8 @@ interface StatusSnapshot {
   day: number | null;
   /** ฤดูในเกม เช่น autumn/winter (best-effort); null = query ไม่ได้ */
   season: string | null;
+  /** ม็อดที่เปิดใช้ (จาก modoverrides.lua); null = ไม่ได้ลงม็อด */
+  mods: ModEntry[] | null;
 }
 
 /** map ฤดู DST → ข้อความไทย + emoji */
@@ -163,6 +174,8 @@ export class ServerStatusPresence {
     const players = anyRunning ? await this.manager.listPlayers() : [];
     const world = anyRunning ? await this.manager.getWorldInfo() : null;
     const cluster = await this.readClusterInfo();
+    // ชื่อม็อดถูก cache 7 วันใน mods.ts → ดึงทุกรอบแทบไม่มี network; พังก็คืน null
+    const mods = await this.manager.getMods().catch(() => null);
     return {
       shards,
       anyRunning,
@@ -171,6 +184,7 @@ export class ServerStatusPresence {
       cluster,
       day: world?.day ?? null,
       season: world?.season ?? null,
+      mods,
     };
   }
 
@@ -266,6 +280,55 @@ export class ServerStatusPresence {
     return embed;
   }
 
+  /**
+   * embeds รายชื่อม็อด (ชื่อเป็นลิงก์ markdown → คลิกไปหน้า workshop)
+   * แบ่งหลาย embed: แต่ละตัว description ≤ MOD_EMBED_CHARS, เพิ่ม embed ไปจน
+   * ครบทุกม็อด — แต่ไม่เกินลิมิต Discord (จำนวน embed + งบรวม 6000 ตัว)
+   * เกินงบ → ต่อท้าย "… +N ม็อด" ที่ embed สุดท้าย (best-effort)
+   *
+   * maxEmbeds = จำนวน embed ม็อดที่เหลือใช้ได้ (หัก status embed ออกแล้ว)
+   */
+  private buildModEmbeds(mods: ModEntry[] | null, maxEmbeds: number): EmbedBuilder[] {
+    if (mods === null) return [];
+    const enabled = mods.filter((m) => m.enabled);
+    if (enabled.length === 0) return [];
+
+    const chunks: string[] = [];
+    let cur = "";
+    let total = 0;
+    let shown = 0;
+    for (const m of enabled) {
+      const line = `• [${m.name}](${m.url})`;
+      // หยุดถ้าจะเกินจำนวน embed ที่เหลือ หรือเกินงบรวม
+      const wouldNewChunk = cur !== "" && cur.length + 1 + line.length > MOD_EMBED_CHARS;
+      const chunksSoFar = chunks.length + (cur ? 1 : 0);
+      if (wouldNewChunk && chunksSoFar >= maxEmbeds) break;
+      if (total + line.length + 1 > MODS_TOTAL_BUDGET) break;
+
+      if (wouldNewChunk) {
+        chunks.push(cur);
+        cur = line;
+      } else {
+        cur = cur ? `${cur}\n${line}` : line;
+      }
+      total += line.length + 1;
+      shown++;
+    }
+    if (cur) chunks.push(cur);
+
+    const rest = enabled.length - shown;
+    if (rest > 0 && chunks.length > 0) {
+      chunks[chunks.length - 1] += `\n… +${rest} ม็อด`;
+    }
+
+    return chunks.map((desc, i) =>
+      new EmbedBuilder()
+        .setColor(COLOR_MODS)
+        .setTitle(i === 0 ? `🧩 ม็อดที่ใช้ (${enabled.length})` : "🧩 ม็อด (ต่อ)")
+        .setDescription(desc),
+    );
+  }
+
   // ── discord IO ──────────────────────────────────────────────────────
 
   /** fetch ห้อง text สำหรับ embed (มี messages/send) */
@@ -293,13 +356,17 @@ export class ServerStatusPresence {
   private async updateMessage(): Promise<void> {
     const channel = await this.getTextChannel();
     if (!channel || !channel.isSendable()) return;
-    const embed = this.buildEmbed(await this.snapshot());
+    const snap = await this.snapshot();
+    const statusEmbed = this.buildEmbed(snap);
+    // status embed 1 ตัว + ม็อดได้อีกไม่เกิน MAX_EMBEDS-1
+    const modEmbeds = this.buildModEmbeds(snap.mods, MAX_EMBEDS - 1);
+    const embeds = [statusEmbed, ...modEmbeds];
 
     // edit message เดิมถ้ามี
     if (this.messageId) {
       try {
         const msg = await channel.messages.fetch(this.messageId);
-        await msg.edit({ embeds: [embed] });
+        await msg.edit({ embeds });
         this.lastMsgError = "";
         return;
       } catch {
@@ -317,7 +384,7 @@ export class ServerStatusPresence {
       );
       if (mine) {
         this.messageId = mine.id;
-        await mine.edit({ embeds: [embed] });
+        await mine.edit({ embeds });
         this.lastMsgError = "";
         return;
       }
@@ -326,7 +393,7 @@ export class ServerStatusPresence {
     }
 
     try {
-      const sent = await channel.send({ embeds: [embed] });
+      const sent = await channel.send({ embeds });
       this.messageId = sent.id;
       this.lastMsgError = "";
     } catch (err) {

@@ -45,6 +45,11 @@ export function serverLogPath(dst: DSTConfig, shard: string): string {
   return join(shardDir(dst, shard), "server_log.txt");
 }
 
+/** path ของ modoverrides.lua ต่อ shard (รายชื่อ/ค่า mod ที่เปิดใช้; อาจไม่มีไฟล์) */
+export function modOverridesPath(dst: DSTConfig, shard: string): string {
+  return join(shardDir(dst, shard), "modoverrides.lua");
+}
+
 /**
  * args สำหรับ launch shard หนึ่งตัว
  * -console เปิด stdin Lua console, persistent root + conf dir ชี้ที่เก็บ cluster

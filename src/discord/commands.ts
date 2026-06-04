@@ -67,6 +67,10 @@ export function buildCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
       .setDescription("ดูผู้เล่นที่ออนไลน์อยู่"),
 
     new SlashCommandBuilder()
+      .setName("mods")
+      .setDescription("ดูม็อดที่ server เปิดใช้ (อ่านจาก modoverrides.lua)"),
+
+    new SlashCommandBuilder()
       .setName("announce")
       .setDescription("ประกาศข้อความให้ผู้เล่นทุกคน")
       .addStringOption((o) =>

@@ -221,6 +221,12 @@ async function handleApi(app: BotApp, req: IncomingMessage, res: ServerResponse,
     ]);
     return json(res, 200, { running: true, shards, anyRunning, players, world });
   }
+  if (req.method === "GET" && path === "/api/mods") {
+    if (!manager) return json(res, 200, { available: false, mods: [] });
+    const mods = await manager.getMods();
+    if (mods === null) return json(res, 200, { available: false, mods: [] });
+    return json(res, 200, { available: true, mods });
+  }
   if (req.method === "POST" && path === "/api/control") {
     if (!manager) return json(res, 409, { error: "บอทยังไม่ได้รัน" });
     const body = await readBody(req);

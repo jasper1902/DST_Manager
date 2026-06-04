@@ -199,6 +199,8 @@ async function handleCommand(
         return await cmdLogs(interaction, manager);
       case "players":
         return await cmdPlayers(interaction, manager);
+      case "mods":
+        return await cmdMods(interaction, manager);
       case "announce":
         return await cmdAnnounce(interaction, manager);
       case "save":
@@ -419,6 +421,49 @@ async function cmdPlayers(
   }
   const list = players.map((p, i) => `${i + 1}. ${p}`).join("\n");
   await interaction.editReply(`👥 ผู้เล่นออนไลน์ (${players.length})\n${list}`);
+}
+
+async function cmdMods(
+  interaction: ChatInputCommandInteraction,
+  manager: DSTManager,
+): Promise<void> {
+  // resolve ชื่อม็อดยิง Steam API → อาจช้า → defer ก่อน
+  await interaction.deferReply();
+  const mods = await manager.getMods();
+  if (mods === null) {
+    await interaction.editReply("ℹ️ ไม่พบ `modoverrides.lua` — server นี้ไม่ได้เปิดใช้ม็อด");
+    return;
+  }
+  if (mods.length === 0) {
+    await interaction.editReply("ℹ️ มีไฟล์ม็อดแต่ไม่มีม็อดที่เปิดใช้");
+    return;
+  }
+  const on = mods.filter((m) => m.enabled).length;
+  const lines = mods.map((m) => `${m.enabled ? "🟢" : "⚪"} [${m.name}](${m.url})`);
+
+  // รายการม็อดอาจยาวเกิน 2000 ตัว/ข้อความ → แบ่งส่งหลายก้อน
+  const chunks = chunkLines(lines, 1900);
+  const header = `🧩 ม็อดที่ใช้ (${on}/${mods.length} เปิดอยู่)`;
+  await interaction.editReply(`${header}\n${chunks[0] ?? "—"}`);
+  for (const chunk of chunks.slice(1)) {
+    await interaction.followUp(chunk);
+  }
+}
+
+/** รวมบรรทัดเป็นก้อนละไม่เกิน max ตัวอักษร (ไม่ตัดกลางบรรทัด) */
+function chunkLines(lines: string[], max: number): string[] {
+  const chunks: string[] = [];
+  let cur = "";
+  for (const line of lines) {
+    if (cur && cur.length + 1 + line.length > max) {
+      chunks.push(cur);
+      cur = line;
+    } else {
+      cur = cur ? `${cur}\n${line}` : line;
+    }
+  }
+  if (cur) chunks.push(cur);
+  return chunks;
 }
 
 async function cmdAnnounce(

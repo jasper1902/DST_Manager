@@ -88,6 +88,11 @@ export const PAGE = `<!doctype html>
   </div>
 
   <div class="card">
+    <h2>🧩 ม็อดที่ใช้ <span class="muted normal-case tracking-normal font-normal">(จาก modoverrides.lua)</span></h2>
+    <div id="mods" class="text-slate-400 text-sm">—</div>
+  </div>
+
+  <div class="card">
     <h2>🎮 ควบคุม DST <span class="muted normal-case tracking-normal font-normal">(ต้องรันบอทก่อน)</span></h2>
     <div class="controls">
       <button class="ctrl ok" data-action="start">▶️ Start</button>
@@ -250,6 +255,22 @@ export const PAGE = `<!doctype html>
     }catch(e){}
   }
 
+  async function loadMods(){
+    try{
+      var d = await api('/api/mods');
+      if(!d.available){ el('mods').textContent = d.mods ? 'ไม่ได้เปิดใช้ม็อด (ไม่พบ modoverrides.lua)' : 'บอทยังไม่ได้รัน'; return; }
+      if(!d.mods.length){ el('mods').textContent = 'มีไฟล์ม็อดแต่ไม่มีม็อดที่เปิดใช้'; return; }
+      var on = d.mods.filter(function(m){ return m.enabled; }).length;
+      var html = '<div class="muted mb-1">'+on+'/'+d.mods.length+' เปิดอยู่</div><ul class="list-none p-0 m-0">';
+      for(var i=0;i<d.mods.length;i++){
+        var m = d.mods[i];
+        html += '<li>'+(m.enabled?'🟢':'⚪')+' <a href="'+h(m.url)+'" target="_blank" rel="noopener" class="text-sky-400 hover:underline">'+h(m.name)+'</a></li>';
+      }
+      html += '</ul>';
+      el('mods').innerHTML = html;
+    }catch(e){ el('mods').innerHTML = '<span class="warn">อ่านม็อดไม่ได้: '+h(e.message)+'</span>'; }
+  }
+
   async function loadCluster(){
     try{
       var d = await api('/api/config');
@@ -290,7 +311,7 @@ export const PAGE = `<!doctype html>
     try{ await api('/api/bot/'+path,'POST'); }
     catch(e){ toast('✗ '+e.message); }
     loadState(); loadStatus();
-    if(path==='start'||path==='restart') setTimeout(function(){ loadCluster(); }, 500);
+    if(path==='start'||path==='restart') setTimeout(function(){ loadCluster(); loadMods(); }, 500);
   }
 
   el('btn-run').addEventListener('click', function(){ botLifecycle('start'); });
@@ -317,6 +338,7 @@ export const PAGE = `<!doctype html>
   loadState();
   loadStatus();
   loadCluster();
+  loadMods();
   setInterval(loadState, 4000);
   setInterval(loadStatus, 6000);
 </script>

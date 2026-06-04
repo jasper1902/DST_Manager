@@ -1,6 +1,6 @@
 {
   "name": "dst-manager",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "description": "Don't Starve Together dedicated server manager controlled via Discord (bun + Windows)",

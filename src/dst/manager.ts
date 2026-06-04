@@ -3,6 +3,7 @@ import type { AppConfig, BackupConfig, DSTConfig } from "../config.js";
 import { type BackupInfo, createBackup, listBackups, restoreBackup } from "./backup.js";
 import { console_ } from "./console.js";
 import { parsePlayerRow, parseWorldInfo, type WorldInfo } from "./logParser.js";
+import { getModList, type ModEntry } from "./mods.js";
 import { binaryCwd, binaryPath, launchArgs } from "./paths.js";
 import { ShardProcess, type ShardState } from "./process.js";
 import { discoverShards } from "./shards.js";
@@ -205,6 +206,15 @@ export class DSTManager extends EventEmitter {
 
   logs(shard: string, limit?: number): string[] {
     return this.getShard(shard).logs(limit);
+  }
+
+  /**
+   * รายการม็อดที่ cluster เปิดใช้ (อ่านจาก modoverrides.lua + resolve ชื่อจาก Steam)
+   * ไม่ขึ้นกับว่า server รันอยู่หรือไม่ (อ่านจากไฟล์ตรง ๆ)
+   * คืน null ถ้าไม่มี modoverrides.lua เลย (เซิร์ฟไม่ได้ลงม็อด)
+   */
+  async getMods(): Promise<ModEntry[] | null> {
+    return getModList(this.dst, this.shardNames);
   }
 
   // ── console actions ────────────────────────────────────────────────

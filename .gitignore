@@ -10,6 +10,8 @@ dist/
 .DS_Store
 # channel ID ที่ bot สร้าง/จำไว้ (ผูกกับ guild + ห้องจริง ไม่ควร commit)
 channels.json
+# cache ชื่อม็อด (resolve จาก Steam) — สร้างใหม่ได้ ไม่ต้อง commit
+mods-cache.json
 # DST persistent data — default persistent root = โฟลเดอร์โปรเจกต์
 # cluster_token.txt = secret, saves, backups ห้าม commit
 DoNotStarveTogether/
