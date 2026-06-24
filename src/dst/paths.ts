@@ -1,5 +1,21 @@
-import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import type { DSTConfig } from "../config.js";
+
+/**
+ * โฟลเดอร์รากของไฟล์ทั้งหมด (config.json / games / steamcmd / backups อยู่ที่นี่)
+ *  - compiled exe (dst-manager.exe) → โฟลเดอร์เดียวกับ exe เพื่อให้พกพาได้ (วาง exe ที่ไหนก็รันที่นั่น)
+ *  - dev (bun run src/index.ts) → cwd ของโปรเจกต์
+ * detect compiled ด้วยชื่อ execPath (bun dev → execPath = bun, compiled → dst-manager*)
+ */
+export function appBaseDir(): string {
+  return /^dst-manager/i.test(basename(process.execPath)) ? dirname(process.execPath) : process.cwd();
+}
+
+/** โฟลเดอร์เกม DST: <base>\games\DoNotStarveTogether (เผื่อรองรับเกมอื่นในอนาคต) */
+export function gameRootDir(): string {
+  return join(appBaseDir(), "games", "DoNotStarveTogether");
+}
 
 /**
  * ชื่อ binary ต่าง platform: Windows มี .exe, Linux ไม่มี
@@ -8,6 +24,11 @@ import type { DSTConfig } from "../config.js";
 function serverBinaryName(): string {
   const base = "dontstarve_dedicated_server_nullrenderer_x64";
   return process.platform === "win32" ? `${base}.exe` : base;
+}
+
+/** server binary ถูกติดตั้งแล้วหรือยัง (ใช้เช็คก่อน start / โชว์สถานะใน web) */
+export function serverInstalled(dst: DSTConfig): boolean {
+  return existsSync(binaryPath(dst));
 }
 
 /** path เต็มของ binary: <install>\bin64\<name> */

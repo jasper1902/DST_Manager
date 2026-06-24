@@ -60,9 +60,6 @@ function setupView(c: AppConfig): unknown {
       actionLogChannelName: c.discord.actionLogChannelName,
     },
     dst: {
-      installDir: c.dst.installDir,
-      persistentRoot: c.dst.persistentRoot,
-      confDir: c.dst.confDir,
       cluster: c.dst.cluster,
       shards: (c.dst.shards ?? []).join(","),
     },
@@ -116,9 +113,10 @@ function applySetup(cur: AppConfig, body: Record<string, unknown>): AppConfig {
       actionLogChannelName: s(d.actionLogChannelName) || cur.discord.actionLogChannelName,
     },
     dst: {
-      installDir: s(dst.installDir),
-      persistentRoot: s(dst.persistentRoot) || cur.dst.persistentRoot,
-      confDir: s(dst.confDir) || cur.dst.confDir,
+      // installDir/persistentRoot/confDir derive อัตโนมัติใน loadConfig — คงค่าปัจจุบันไว้เฉยๆ
+      installDir: cur.dst.installDir,
+      persistentRoot: cur.dst.persistentRoot,
+      confDir: cur.dst.confDir,
       cluster: s(dst.cluster),
       shards: shards && shards.length > 0 ? shards : undefined,
     },
@@ -177,6 +175,15 @@ async function handleApi(app: BotApp, req: IncomingMessage, res: ServerResponse,
   if (req.method === "POST" && path === "/api/bot/restart") {
     await app.restart();
     return json(res, 200, { ok: true, state: app.state });
+  }
+
+  // ── ติดตั้ง/อัปเดต DST server ผ่าน SteamCMD ──
+  if (req.method === "GET" && path === "/api/server/status") {
+    return json(res, 200, app.installStatus());
+  }
+  if (req.method === "POST" && path === "/api/server/install") {
+    app.installServer(); // เริ่ม background — poll /api/server/status ดู progress
+    return json(res, 200, { ok: true });
   }
 
   if (req.method === "GET" && path === "/api/setup") {

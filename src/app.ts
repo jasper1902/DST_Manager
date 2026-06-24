@@ -4,9 +4,25 @@ import { missingRequired } from "./config.js";
 import { createBot } from "./discord/bot.js";
 import { registerCommands } from "./discord/register.js";
 import { DSTManager, type ManagerCrashEvent } from "./dst/manager.js";
+import { serverInstalled } from "./dst/paths.js";
 import { createRestartScheduler, type RestartScheduler } from "./dst/scheduler.js";
+import { downloadServer, hasSteamcmd } from "./dst/steamcmd.js";
 
 export type BotState = "stopped" | "starting" | "running" | "stopping";
+
+/** จำนวนบรรทัด log ของการติดตั้งที่เก็บไว้ให้ web ดึงไปโชว์ */
+const INSTALL_LOG_MAX = 200;
+
+/** สถานะการดาวน์โหลด/ติดตั้ง DST server (snapshot ให้ web poll) */
+export interface InstallStatus {
+  installed: boolean;
+  hasSteamcmd: boolean;
+  running: boolean;
+  done: boolean;
+  error: string | null;
+  log: string[];
+  installDir: string;
+}
 
 /**
  * คุม lifecycle ของบอท (manager + Discord client + scheduler) แบบ start/stop ได้ตามสั่ง
@@ -21,6 +37,7 @@ export class BotApp {
   private bot: Client | null = null;
   private scheduler: RestartScheduler | null = null;
   private lastError: string | null = null;
+  private install = { running: false, done: false, error: null as string | null, log: [] as string[] };
 
   constructor(config: AppConfig) {
     this._config = config;
@@ -42,6 +59,46 @@ export class BotApp {
   /** เปลี่ยน config (อนุญาตเฉพาะตอน bot หยุด เพื่อให้ค่าใหม่มีผลตอน start) */
   setConfig(config: AppConfig): void {
     this._config = config;
+  }
+
+  /** snapshot สถานะการติดตั้ง DST server (ให้ web poll โชว์ progress) */
+  installStatus(): InstallStatus {
+    return {
+      installed: serverInstalled(this._config.dst),
+      hasSteamcmd: hasSteamcmd(),
+      running: this.install.running,
+      done: this.install.done,
+      error: this.install.error,
+      log: this.install.log,
+      installDir: this._config.dst.installDir,
+    };
+  }
+
+  /**
+   * เริ่มดาวน์โหลด/อัปเดต DST server แบบ background — คืนทันที (web poll ดู progress ผ่าน installStatus)
+   * ต้องให้บอทหยุดก่อน (กันติดตั้งทับขณะ server รัน)
+   */
+  installServer(): void {
+    if (this._state !== "stopped") throw new Error("ต้องหยุดบอทก่อนถึงจะติดตั้ง/อัปเดต server ได้");
+    if (this.install.running) throw new Error("กำลังติดตั้งอยู่แล้ว");
+
+    this.install = { running: true, done: false, error: null, log: [] };
+    const push = (line: string): void => {
+      this.install.log.push(line);
+      if (this.install.log.length > INSTALL_LOG_MAX) this.install.log.shift();
+    };
+
+    void downloadServer(this._config.dst, push)
+      .then(() => {
+        this.install.done = true;
+      })
+      .catch((err: unknown) => {
+        this.install.error = err instanceof Error ? err.message : String(err);
+        push(`✗ ${this.install.error}`);
+      })
+      .finally(() => {
+        this.install.running = false;
+      });
   }
 
   /** start บอท; throw ถ้า config ยังไม่ครบ หรือกำลังรันอยู่ */

@@ -17,3 +17,7 @@ mods-cache.json
 DoNotStarveTogether/
 Agreements/
 backups/
+# server binary + cluster data ที่ auto-download/สร้าง (ใหญ่มาก ไม่ commit)
+games/
+# SteamCMD bootstrapper ที่โหลดมาเอง
+steamcmd/

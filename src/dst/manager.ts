@@ -4,7 +4,7 @@ import { type BackupInfo, createBackup, listBackups, restoreBackup } from "./bac
 import { console_ } from "./console.js";
 import { parsePlayerRow, parseWorldInfo, type WorldInfo } from "./logParser.js";
 import { getModList, type ModEntry } from "./mods.js";
-import { binaryCwd, binaryPath, launchArgs } from "./paths.js";
+import { binaryCwd, binaryPath, launchArgs, serverInstalled } from "./paths.js";
 import { ShardProcess, type ShardState } from "./process.js";
 import { discoverShards } from "./shards.js";
 
@@ -154,6 +154,12 @@ export class DSTManager extends EventEmitter {
 
   /** start ทุก shard ตามลำดับ; Master ก่อนแล้วเว้นช่วงค่อย start dependents */
   async start(): Promise<void> {
+    // เช็ค binary ก่อน spawn — กัน ENOENT ดิบ ๆ ถ้ายังดาวน์โหลด server ไม่เสร็จ/ไม่ได้ติดตั้ง
+    if (!serverInstalled(this.dst)) {
+      throw new Error(
+        "ยังไม่ได้ติดตั้ง DST server (ไม่พบ binary) — ไปที่หน้าเว็บแล้วกดปุ่ม 'ดาวน์โหลด/อัปเดต DST server' ให้เสร็จก่อน",
+      );
+    }
     const order = this.activeShards();
     for (let i = 0; i < order.length; i++) {
       const name = order[i]!;

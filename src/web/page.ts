@@ -81,6 +81,16 @@ export const PAGE = `<!doctype html>
   </div>
 
   <div class="card">
+    <h2>📥 DST Server <span class="muted normal-case tracking-normal font-normal">(ดาวน์โหลด/อัปเดตผ่าน SteamCMD)</span></h2>
+    <div class="controls">
+      <span class="text-sm text-slate-400">สถานะ:</span> <span id="srvstate" class="text-sm text-slate-300">...</span>
+      <button id="btn-install" class="ok">⬇️ ดาวน์โหลด/อัปเดต DST server</button>
+    </div>
+    <div id="srvnote" class="muted mt-2"></div>
+    <pre id="srvlog" class="hidden mt-3 max-h-64"></pre>
+  </div>
+
+  <div class="card">
     <h2>📊 สถานะ server</h2>
     <div id="shards" class="text-slate-400 text-sm">—</div>
     <div id="worldinfo"></div>
@@ -141,10 +151,7 @@ export const PAGE = `<!doctype html>
       {p:'discord.actionLogChannelName', l:'ชื่อห้อง action log'}
     ]},
     { title:'DST Server', fields:[
-      {p:'dst.installDir', l:'Install Dir'},
-      {p:'dst.persistentRoot', l:'Persistent Root'},
-      {p:'dst.confDir', l:'Conf Dir'},
-      {p:'dst.cluster', l:'Cluster'},
+      {p:'dst.cluster', l:'Cluster (ชื่อโฟลเดอร์ใน games/DoNotStarveTogether/clusters)'},
       {p:'dst.shards', l:'Shards (comma, เว้น=auto)'}
     ]},
     { title:'Status', fields:[
@@ -224,6 +231,7 @@ export const PAGE = `<!doctype html>
   async function loadState(){
     try{
       var d = await api('/api/bot/state');
+      BOT_STATE = d.state;
       var badge = el('botstate');
       badge.textContent = d.state;
       badge.className = 'badge b-' + d.state;
@@ -290,7 +298,7 @@ export const PAGE = `<!doctype html>
         html += '<button class="clsave" data-key="'+h(f.key)+'">บันทึก</button></div>';
       }
       el('cluster').innerHTML = html;
-    }catch(e){ el('cluster').innerHTML = '<span class="warn">อ่าน cluster.ini ไม่ได้ (ตั้ง DST path + cluster ให้ถูกก่อน): '+h(e.message)+'</span>'; }
+    }catch(e){ el('cluster').innerHTML = '<span class="warn">อ่าน cluster.ini ไม่ได้ (ตั้งชื่อ cluster ให้ตรงโฟลเดอร์ + ดาวน์โหลด server ก่อน): '+h(e.message)+'</span>'; }
   }
 
   async function saveCluster(key){
@@ -314,6 +322,57 @@ export const PAGE = `<!doctype html>
     if(path==='start'||path==='restart') setTimeout(function(){ loadCluster(); loadMods(); }, 500);
   }
 
+  var BOT_STATE = 'stopped';
+  var srvPolling = false;
+
+  function renderServer(d){
+    el('srvstate').innerHTML = d.installed
+      ? '<span class="text-emerald-400">✓ ติดตั้งแล้ว</span>'
+      : '<span class="warn">ยังไม่ได้ติดตั้ง</span>';
+    el('srvnote').textContent = d.installDir ? ('📁 '+d.installDir) : '';
+    // ติดตั้งได้เฉพาะตอนบอทหยุด และไม่ได้กำลังติดตั้งอยู่
+    el('btn-install').disabled = d.running || BOT_STATE !== 'stopped';
+    if(d.log && d.log.length){
+      var pre = el('srvlog');
+      pre.classList.remove('hidden');
+      pre.textContent = d.log.join('\\n');
+      pre.scrollTop = pre.scrollHeight;
+    }
+  }
+
+  async function loadServerStatus(){
+    try{ renderServer(await api('/api/server/status')); }catch(e){}
+  }
+
+  async function pollServer(){
+    if(srvPolling) return;
+    srvPolling = true;
+    var tick = async function(){
+      var d;
+      try{ d = await api('/api/server/status'); }catch(e){ d = null; }
+      if(d){
+        renderServer(d);
+        if(d.running){ setTimeout(tick, 1500); return; }
+        if(d.error) toast('✗ ติดตั้งไม่สำเร็จ: '+d.error);
+        else if(d.done) toast('✓ ติดตั้ง DST server เสร็จแล้ว');
+      }
+      srvPolling = false;
+      loadState();
+    };
+    tick();
+  }
+
+  async function doInstall(){
+    if(BOT_STATE !== 'stopped'){ toast('⚠️ ต้องหยุดบอทก่อนถึงจะติดตั้งได้'); return; }
+    if(!confirm('ดาวน์โหลด/อัปเดต DST server ผ่าน SteamCMD ? (อาจใช้เวลาหลายนาที)')) return;
+    el('btn-install').disabled = true;
+    el('srvlog').classList.remove('hidden');
+    el('srvlog').textContent = '⏳ เริ่มติดตั้ง...';
+    try{ await api('/api/server/install','POST'); pollServer(); }
+    catch(e){ toast('✗ '+e.message); loadServerStatus(); }
+  }
+
+  el('btn-install').addEventListener('click', doInstall);
   el('btn-run').addEventListener('click', function(){ botLifecycle('start'); });
   el('btn-stop').addEventListener('click', function(){ botLifecycle('stop'); });
   el('btn-rebot').addEventListener('click', function(){ botLifecycle('restart'); });
@@ -339,8 +398,10 @@ export const PAGE = `<!doctype html>
   loadStatus();
   loadCluster();
   loadMods();
+  loadServerStatus();
   setInterval(loadState, 4000);
   setInterval(loadStatus, 6000);
+  setInterval(function(){ if(!srvPolling) loadServerStatus(); }, 5000);
 </script>
 </body>
 </html>`;

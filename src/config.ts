@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { appBaseDir, gameRootDir } from "./dst/paths.js";
 
 /**
  * Config ทั้งหมดเก็บใน config.json (ไม่ใช้ .env แล้ว)
@@ -21,9 +22,13 @@ export interface DiscordConfig {
 }
 
 export interface DSTConfig {
+  /** path ตัว dedicated server — derive อัตโนมัติเป็น <base>\games\DoNotStarveTogether\server (ไม่ใช่ user input) */
   installDir: string;
+  /** persistent_storage_root — derive เป็น <base>\games\DoNotStarveTogether */
   persistentRoot: string;
+  /** conf_dir — fix เป็น "clusters" */
   confDir: string;
+  /** ชื่อ cluster ที่จะเปิด (user input) */
   cluster: string;
   /** override รายชื่อ shard (เว้น = auto-discover จากโฟลเดอร์ที่มี server.ini) */
   shards?: string[];
@@ -70,12 +75,7 @@ interface RawConfig {
   dailyRestartTime?: string;
 }
 
-export const CONFIG_FILE = join(process.cwd(), "config.json");
-
-/** default persistent root = โฟลเดอร์โปรเจกต์ปัจจุบัน (เก็บ DST data ในโปรเจกต์) */
-function defaultPersistentRoot(): string {
-  return process.cwd();
-}
+export const CONFIG_FILE = join(appBaseDir(), "config.json");
 
 function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
@@ -93,8 +93,11 @@ function readRaw(): RawConfig {
 /** โหลด config จาก config.json + เติม default; field ที่จำเป็นอาจว่างได้ (เช็คด้วย missingRequired) */
 export function loadConfig(): AppConfig {
   const raw = readRaw();
-  const persistentRoot = str(raw.dst?.persistentRoot) || defaultPersistentRoot();
-  const confDir = str(raw.dst?.confDir) || "DoNotStarveTogether";
+  // path ติดตั้ง/persistent derive จากตำแหน่ง exe เสมอ — ละค่าใน config.json (กัน path เก่าค้าง)
+  const gameRoot = gameRootDir();
+  const installDir = join(gameRoot, "server");
+  const persistentRoot = gameRoot;
+  const confDir = "clusters";
   const shards = raw.dst?.shards?.filter((s) => str(s) !== "");
 
   return {
@@ -110,7 +113,7 @@ export function loadConfig(): AppConfig {
       actionLogChannelName: str(raw.discord?.actionLogChannelName) || "dst-actions",
     },
     dst: {
-      installDir: str(raw.dst?.installDir),
+      installDir,
       persistentRoot,
       confDir,
       cluster: str(raw.dst?.cluster),
@@ -122,7 +125,7 @@ export function loadConfig(): AppConfig {
       showPassword: raw.status?.showPassword ?? true,
     },
     backup: {
-      dir: str(raw.backup?.dir) || join(process.cwd(), "backups"),
+      dir: str(raw.backup?.dir) || join(appBaseDir(), "backups"),
       keep: Math.max(1, raw.backup?.keep ?? 10),
     },
     web: {
@@ -147,7 +150,6 @@ export function missingRequired(c: AppConfig): string[] {
   if (!c.discord.token) missing.push("Discord token");
   if (!c.discord.clientId) missing.push("Discord client ID");
   if (!c.discord.guildId) missing.push("Discord guild ID");
-  if (!c.dst.installDir) missing.push("DST install dir");
   if (!c.dst.cluster) missing.push("DST cluster");
   return missing;
 }

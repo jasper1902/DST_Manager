@@ -8,6 +8,18 @@ A manager for a **Don't Starve Together (DST) dedicated server**, controlled via
 
 Core idea: there is **no RCON**. The manager supervises the DST server binary as a child process, sends Lua console commands via **stdin** (`-console` flag), reads `stdout`/`stderr` line-by-line, and edits `cluster.ini` directly. Because it spawns the real binary, **the bot must run on the same machine/user as the DST install**.
 
+The server binary is **not** installed manually — the manager **auto-downloads it via SteamCMD** (app id `343050`, `login anonymous`) from a button in the web UI. Everything lives next to the executable in a fixed layout (`appBaseDir()` in `dst/paths.ts` = the exe's folder when compiled, else cwd):
+
+```
+dst-manager.exe / config.json / channels.json
+steamcmd/                              # SteamCMD bootstrapper (auto-downloaded + extracted)
+games/DoNotStarveTogether/
+  server/                              # the dedicated server  → DSTConfig.installDir
+    bin64/dontstarve_dedicated_server_nullrenderer_x64.exe
+  clusters/<cluster>/                  # cluster data (Master/Caves/cluster.ini)
+backups/
+```
+
 ## Commands
 
 ```powershell
@@ -52,12 +64,13 @@ Key boundaries to preserve:
 - **Mods** (`dst/mods.ts`): read from `modoverrides.lua` (per-shard, tries Master first), resolve workshop IDs → names via the public Steam Web API, cached 7 days in `mods-cache.json`. Offline/unresolvable → falls back to ID + workshop link.
 - **Editable cluster config is whitelisted** in `dst/clusterConfig.ts` (`WHITELIST`): only those `cluster.ini` keys can be read/written via `/config` or the web UI. Changes take effect on restart. `cluster_password` is treated as sensitive and masked.
 - **Backups** use the system `tar` (bundled on Win10+/Linux/macOS, no dependency); `.tar.gz` of the whole cluster dir stored outside it. `restore` requires all shards stopped.
+- **Server install** (`dst/steamcmd.ts`): `downloadServer()` fetches the `steamcmd.zip` bootstrapper (only on first run), extracts it with the same system `tar`, then runs `steamcmd +force_install_dir <installDir> +login anonymous +app_update 343050 validate +quit`, streaming output line-by-line. `BotApp.installServer()` runs it in the background (200-line log ring buffer) and only when the bot is **stopped**; the web UI polls `GET /api/server/status` for progress. Caveat: SteamCMD `force_install_dir` is unreliable when the path contains spaces.
 
 ## Config
 
 - All runtime config lives in **`config.json`** (gitignored — contains secrets). There is **no `.env`**. It is created/edited through the web UI setup page; `config.ts` loads it and fills defaults. Don't reintroduce env-var config.
-- `missingRequired()` in `config.ts` defines what must be set before the bot can start: Discord token, client ID, guild ID, DST install dir, DST cluster.
-- Note the README is in Thai and partially stale (e.g. it states the default persistent root is `%USERPROFILE%\Documents\Klei`, but `config.ts` actually defaults it to the project cwd). When README and code disagree, trust the code.
+- `missingRequired()` in `config.ts` defines what must be set before the bot can start: Discord token, client ID, guild ID, DST cluster. **`installDir` / `persistentRoot` / `confDir` are no longer user input** — `loadConfig()` always derives them from `appBaseDir()` (`installDir = games/DoNotStarveTogether/server`, `persistentRoot = games/DoNotStarveTogether`, `confDir = "clusters"`), ignoring any stored values. They remain fields on `DSTConfig` so `paths.ts`/`backup.ts`/`shards.ts` are unchanged.
+- Note the README is in Thai and partially stale (e.g. paths). When README and code disagree, trust the code.
 - Other generated/gitignored runtime files: `channels.json` (provisioned Discord channel IDs), `mods-cache.json`, web auth token (persisted into `config.json` on first boot).
 
 ## Conventions
