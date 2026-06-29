@@ -178,6 +178,19 @@ const MESSAGES = {
   ctrl_backup: { en: (f: string) => `backup: ${f}`, th: (f: string) => `backup: ${f}` },
   unsupported_action: { en: (a: string) => `unsupported action: ${a}`, th: (a: string) => `action ไม่รองรับ: ${a}` },
 
+  // ── manager start guards / cluster token ───────────────────────
+  err_not_installed: {
+    en: "DST server isn't installed (binary not found) — click 'Download/update DST server' on the web page first",
+    th: "ยังไม่ได้ติดตั้ง DST server (ไม่พบ binary) — ไปที่หน้าเว็บแล้วกดปุ่ม 'ดาวน์โหลด/อัปเดต DST server' ให้เสร็จก่อน",
+  },
+  err_no_cluster_token: {
+    en: "Can't start: cluster_token.txt is missing. Add a server token (from https://accounts.klei.com) in the 'Cluster Token' box on the web page first.",
+    th: "เริ่ม server ไม่ได้: ไม่มี cluster_token.txt — ใส่ server token (จาก https://accounts.klei.com) ในช่อง 'Cluster Token' บนหน้าเว็บก่อน",
+  },
+  err_set_cluster_first: { en: "set the cluster name first", th: "ตั้งชื่อ cluster ก่อน" },
+  token_saved: { en: "cluster_token.txt saved", th: "บันทึก cluster_token.txt แล้ว" },
+  err_token_empty: { en: "token must not be empty", th: "token ต้องไม่ว่าง" },
+
   // ── slash command descriptions (commands.ts) ───────────────────
   cmd_start: { en: "Start the DST server (Master first, then other shards)", th: "เปิด DST server (Master ก่อน แล้ว shard อื่น)" },
   cmd_stop: { en: "Stop the DST server gracefully (saves before shutdown)", th: "ปิด DST server แบบ graceful (save ก่อนปิด)" },

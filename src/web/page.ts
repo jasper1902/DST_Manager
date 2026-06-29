@@ -109,6 +109,19 @@ export const PAGE = `<!doctype html>
   </div>
 
   <div class="card">
+    <h2><span data-i18n="sec_token">🔑 Cluster Token</span> <span class="muted normal-case tracking-normal font-normal" data-i18n="sec_token_note">(required to start — get from accounts.klei.com)</span></h2>
+    <div id="tokenstate" class="text-sm mb-2 text-slate-400">—</div>
+    <div class="row">
+      <label data-i18n="lbl_cluster_token">cluster_token.txt</label>
+      <input id="cltoken" type="text" placeholder="pds-g1-xxxxxxxx... / KU_xxxxxxxx...">
+    </div>
+    <div class="controls mt-2">
+      <button id="btn-token-save" data-i18n="btn_save_token">💾 Save token</button>
+      <a href="https://accounts.klei.com" target="_blank" rel="noopener" class="text-sky-400 hover:underline text-[13px]" data-i18n="token_get_link">Get a server token ↗</a>
+    </div>
+  </div>
+
+  <div class="card">
     <h2><span data-i18n="sec_status">📊 Server status</span></h2>
     <div id="shards" class="text-slate-400 text-sm">—</div>
     <div id="worldinfo"></div>
@@ -144,6 +157,10 @@ export const PAGE = `<!doctype html>
       lang_note: 'Note: the web UI switches language instantly; Discord applies it after the next bot restart.',
       sec_bot: '🤖 Bot', sec_config: '⚙️ Settings (config.json)',
       sec_server: '📥 DST Server', sec_server_note: '(download/update via SteamCMD)',
+      sec_token: '🔑 Cluster Token', sec_token_note: '(required to start — get from accounts.klei.com)',
+      lbl_cluster_token: 'cluster_token.txt', btn_save_token: '💾 Save token', token_get_link: 'Get a server token ↗',
+      token_present: '✓ cluster_token.txt found', token_missing: '⚠️ No cluster_token.txt — the server cannot start until you add one',
+      token_no_cluster: '⚠️ Set the cluster name in Settings first', token_saved: 'cluster_token.txt saved',
       sec_status: '📊 Server status', sec_mods: '🧩 Mods in use', sec_mods_note: '(from modoverrides.lua)',
       sec_control: '🎮 Control DST', sec_control_note: '(start the bot first)',
       sec_cluster: '📝 cluster.ini', sec_cluster_note: '(takes effect on DST restart)',
@@ -181,6 +198,10 @@ export const PAGE = `<!doctype html>
       lang_note: 'หมายเหตุ: web UI สลับภาษาทันที ส่วน Discord จะเปลี่ยนตอน restart บอทครั้งถัดไป',
       sec_bot: '🤖 บอท', sec_config: '⚙️ ตั้งค่า (config.json)',
       sec_server: '📥 DST Server', sec_server_note: '(ดาวน์โหลด/อัปเดตผ่าน SteamCMD)',
+      sec_token: '🔑 Cluster Token', sec_token_note: '(จำเป็นต่อการ start — ขอได้ที่ accounts.klei.com)',
+      lbl_cluster_token: 'cluster_token.txt', btn_save_token: '💾 บันทึก token', token_get_link: 'ขอ server token ↗',
+      token_present: '✓ พบ cluster_token.txt', token_missing: '⚠️ ไม่มี cluster_token.txt — start server ไม่ได้จนกว่าจะใส่ token',
+      token_no_cluster: '⚠️ ตั้งชื่อ cluster ในหน้า Settings ก่อน', token_saved: 'บันทึก cluster_token.txt แล้ว',
       sec_status: '📊 สถานะ server', sec_mods: '🧩 ม็อดที่ใช้', sec_mods_note: '(จาก modoverrides.lua)',
       sec_control: '🎮 ควบคุม DST', sec_control_note: '(ต้องรันบอทก่อน)',
       sec_cluster: '📝 cluster.ini', sec_cluster_note: '(มีผลตอน restart DST)',
@@ -418,6 +439,21 @@ export const PAGE = `<!doctype html>
     catch(e){ toast('✗ '+e.message); }
   }
 
+  async function loadToken(){
+    try{
+      var d = await api('/api/token');
+      el('cltoken').value = d.token || '';
+      if(!d.cluster) el('tokenstate').innerHTML = '<span class="warn">'+h(t('token_no_cluster'))+'</span>';
+      else if(d.hasToken) el('tokenstate').innerHTML = '<span class="text-emerald-400">'+h(t('token_present'))+'</span>';
+      else el('tokenstate').innerHTML = '<span class="warn">'+h(t('token_missing'))+'</span>';
+    }catch(e){ el('tokenstate').innerHTML = '<span class="warn">✗ '+h(e.message)+'</span>'; }
+  }
+
+  async function saveToken(){
+    try{ var r = await api('/api/token','POST',{token:el('cltoken').value}); toast('✓ '+r.note); loadToken(); loadState(); }
+    catch(e){ toast('✗ '+e.message); }
+  }
+
   async function ctrlDst(action){
     if((action==='stop'||action==='restart')&&!confirm(t('confirm_action')+action+' ?')) return;
     toast('⏳ '+action+'...');
@@ -439,7 +475,7 @@ export const PAGE = `<!doctype html>
     localStorage.setItem('dstLang', LANG);
     applyLang();
     renderSetup(); loadSetup();
-    loadState(); loadStatus(); loadMods(); loadCluster(); loadServerStatus();
+    loadState(); loadStatus(); loadMods(); loadCluster(); loadServerStatus(); loadToken();
     try{ await api('/api/lang','POST',{language:LANG}); }catch(e){ /* persist พลาดก็ยังสลับฝั่ง client ได้ */ }
   }
 
@@ -531,6 +567,7 @@ export const PAGE = `<!doctype html>
   el('btn-stop').addEventListener('click', function(){ botLifecycle('stop'); });
   el('btn-rebot').addEventListener('click', function(){ botLifecycle('restart'); });
   el('btn-save').addEventListener('click', saveSetup);
+  el('btn-token-save').addEventListener('click', saveToken);
   el('errclose').addEventListener('click', clearError);
   el('lang').addEventListener('change', function(e){ changeLang(e.target.value); });
 
@@ -555,6 +592,7 @@ export const PAGE = `<!doctype html>
   loadCluster();
   loadMods();
   loadServerStatus();
+  loadToken();
   setInterval(loadState, 4000);
   setInterval(loadStatus, 6000);
   setInterval(function(){ if(!srvPolling) loadServerStatus(); }, 5000);

@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { BotApp } from "../app.js";
 import { type AppConfig, missingRequired, saveConfig } from "../config.js";
 import { setConfig, showConfig, whitelistedKeys } from "../dst/clusterConfig.js";
+import { hasClusterToken, readClusterToken, writeClusterToken } from "../dst/clusterToken.js";
 import { asLang, makeT } from "../i18n.js";
 
 /**
@@ -197,6 +198,23 @@ async function handleApi(app: BotApp, req: IncomingMessage, res: ServerResponse,
   if (req.method === "POST" && path === "/api/server/install") {
     app.installServer(); // เริ่ม background — poll /api/server/status ดู progress
     return json(res, 200, { ok: true });
+  }
+
+  // ── cluster_token.txt (จำเป็นต่อการ start server) ──
+  if (req.method === "GET" && path === "/api/token") {
+    return json(res, 200, {
+      hasToken: hasClusterToken(config.dst),
+      token: readClusterToken(config.dst) ?? "",
+      cluster: config.dst.cluster,
+    });
+  }
+  if (req.method === "POST" && path === "/api/token") {
+    if (config.dst.cluster === "") return json(res, 400, { error: t("err_set_cluster_first") });
+    const body = await readBody(req, t);
+    const token = typeof body.token === "string" ? body.token.trim() : "";
+    if (token === "") return json(res, 400, { error: t("err_token_empty") });
+    writeClusterToken(config.dst, token);
+    return json(res, 200, { ok: true, hasToken: true, note: t("token_saved") });
   }
 
   if (req.method === "GET" && path === "/api/setup") {

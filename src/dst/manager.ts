@@ -1,6 +1,9 @@
 import { EventEmitter } from "node:events";
 import type { AppConfig, BackupConfig, DSTConfig } from "../config.js";
+import { makeT, type T } from "../i18n.js";
 import { type BackupInfo, createBackup, listBackups, restoreBackup } from "./backup.js";
+import { ensureClusterFiles } from "./clusterScaffold.js";
+import { hasClusterToken } from "./clusterToken.js";
 import { console_ } from "./console.js";
 import { parsePlayerRow, parseWorldInfo, type WorldInfo } from "./logParser.js";
 import { getModList, type ModEntry } from "./mods.js";
@@ -76,6 +79,7 @@ export class DSTManager extends EventEmitter {
   private readonly dst: DSTConfig;
   private readonly backupCfg: BackupConfig;
   private readonly autoRestart: boolean;
+  private readonly t: T;
   private readonly shardNames: string[];
   private readonly shards = new Map<string, ShardProcess>();
   /** timestamp ของการ auto-restart ล่าสุดต่อ shard (กัน crash loop) */
@@ -86,6 +90,7 @@ export class DSTManager extends EventEmitter {
     this.dst = config.dst;
     this.backupCfg = config.backup;
     this.autoRestart = config.autoRestart;
+    this.t = makeT(config.language);
     this.shardNames = resolveShardNames(config.dst);
     console.log(`✓ shards: ${this.shardNames.join(", ")}`);
 
@@ -156,9 +161,16 @@ export class DSTManager extends EventEmitter {
   async start(): Promise<void> {
     // เช็ค binary ก่อน spawn — กัน ENOENT ดิบ ๆ ถ้ายังดาวน์โหลด server ไม่เสร็จ/ไม่ได้ติดตั้ง
     if (!serverInstalled(this.dst)) {
-      throw new Error(
-        "ยังไม่ได้ติดตั้ง DST server (ไม่พบ binary) — ไปที่หน้าเว็บแล้วกดปุ่ม 'ดาวน์โหลด/อัปเดต DST server' ให้เสร็จก่อน",
-      );
+      throw new Error(this.t("err_not_installed"));
+    }
+    // cluster_token.txt จำเป็นต่อการเชื่อม Klei — ไม่มี → start ไม่ได้ แจ้ง user ให้ใส่ token
+    if (!hasClusterToken(this.dst)) {
+      throw new Error(this.t("err_no_cluster_token"));
+    }
+    // ยังไม่มี cluster.ini / server.ini → สร้าง default ให้ ไม่งั้น engine boot ไม่ได้
+    const created = ensureClusterFiles(this.dst, this.shardNames);
+    for (const f of created) {
+      this.emit("line", { shard: "manager", line: `created default ${f}` } satisfies ManagerLineEvent);
     }
     const order = this.activeShards();
     for (let i = 0; i < order.length; i++) {

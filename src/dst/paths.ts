@@ -56,6 +56,11 @@ export function clusterIniPath(dst: DSTConfig): string {
   return join(clusterDir(dst), "cluster.ini");
 }
 
+/** path ของ cluster_token.txt (server token จาก Klei; จำเป็นต่อการ start server) */
+export function clusterTokenPath(dst: DSTConfig): string {
+  return join(clusterDir(dst), "cluster_token.txt");
+}
+
 /** path ของ server.ini ต่อ shard */
 export function serverIniPath(dst: DSTConfig, shard: string): string {
   return join(shardDir(dst, shard), "server.ini");
