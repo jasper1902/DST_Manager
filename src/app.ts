@@ -22,6 +22,25 @@ export interface InstallStatus {
   error: string | null;
   log: string[];
   installDir: string;
+  /** % ความคืบหน้า (parse จาก output SteamCMD); null = ยังไม่รู้/อยู่ช่วงที่วัดไม่ได้ → bar แบบ indeterminate */
+  progress: number | null;
+  /** ช่วงการทำงานปัจจุบันจาก SteamCMD เช่น "downloading", "verifying" (null = ไม่ทราบ) */
+  phase: string | null;
+}
+
+/**
+ * ดึง % และ phase จากบรรทัด SteamCMD เช่น
+ *   "Update state (0x61) downloading, progress: 42.34 (1234 / 5678)"
+ * ข้ามบรรทัดสรุปท้าย ("unknown, progress: 0.00 (0 / 0)") ที่ไม่งั้นจะรีเซ็ต bar เป็น 0% ก่อนจบ
+ */
+function parseInstallProgress(line: string): { progress: number; phase: string } | null {
+  const m = line.match(/Update state\s*\([^)]*\)\s*([a-z ]+?),\s*progress:\s*([\d.]+)\s*\((\d+)\s*\/\s*(\d+)\)/i);
+  if (!m) return null;
+  const phase = (m[1] ?? "").trim();
+  const total = Number(m[4]);
+  const p = Number.parseFloat(m[2] ?? "");
+  if (phase === "unknown" || total === 0 || !Number.isFinite(p)) return null;
+  return { progress: Math.max(0, Math.min(100, p)), phase };
 }
 
 /**
@@ -37,7 +56,14 @@ export class BotApp {
   private bot: Client | null = null;
   private scheduler: RestartScheduler | null = null;
   private lastError: string | null = null;
-  private install = { running: false, done: false, error: null as string | null, log: [] as string[] };
+  private install = {
+    running: false,
+    done: false,
+    error: null as string | null,
+    log: [] as string[],
+    progress: null as number | null,
+    phase: null as string | null,
+  };
 
   constructor(config: AppConfig) {
     this._config = config;
@@ -71,6 +97,8 @@ export class BotApp {
       error: this.install.error,
       log: this.install.log,
       installDir: this._config.dst.installDir,
+      progress: this.install.progress,
+      phase: this.install.phase,
     };
   }
 
@@ -82,15 +110,22 @@ export class BotApp {
     if (this._state !== "stopped") throw new Error("ต้องหยุดบอทก่อนถึงจะติดตั้ง/อัปเดต server ได้");
     if (this.install.running) throw new Error("กำลังติดตั้งอยู่แล้ว");
 
-    this.install = { running: true, done: false, error: null, log: [] };
+    this.install = { running: true, done: false, error: null, log: [], progress: null, phase: null };
     const push = (line: string): void => {
       this.install.log.push(line);
       if (this.install.log.length > INSTALL_LOG_MAX) this.install.log.shift();
+      const p = parseInstallProgress(line);
+      if (p) {
+        this.install.progress = p.progress;
+        this.install.phase = p.phase;
+      }
     };
 
     void downloadServer(this._config.dst, push)
       .then(() => {
         this.install.done = true;
+        this.install.progress = 100;
+        this.install.phase = null;
       })
       .catch((err: unknown) => {
         this.install.error = err instanceof Error ? err.message : String(err);

@@ -3,6 +3,7 @@ import {
   type RESTPostAPIApplicationCommandsJSONBody,
 } from "discord.js";
 import { whitelistedKeys } from "../dst/clusterConfig.js";
+import { type Lang, makeT } from "../i18n.js";
 
 /** กลุ่มคำสั่งที่ถือว่าเป็น "control" — ต้องผ่าน role check */
 export const CONTROL_COMMANDS = new Set<string>([
@@ -21,7 +22,8 @@ export const CONTROL_COMMANDS = new Set<string>([
  * นิยาม slash command ทั้งหมด (v1)
  * แยก schema ออกจาก handler เพื่อให้ register.ts กับ bot.ts ใช้ตัวเดียวกัน
  */
-export function buildCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
+export function buildCommands(lang: Lang): RESTPostAPIApplicationCommandsJSONBody[] {
+  const t = makeT(lang);
   const configKeyChoices = whitelistedKeys().map((f) => ({
     name: f.key,
     value: f.key,
@@ -30,33 +32,33 @@ export function buildCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
   const commands = [
     new SlashCommandBuilder()
       .setName("start")
-      .setDescription("เปิด DST server (Master ก่อน แล้ว shard อื่น)"),
+      .setDescription(t("cmd_start")),
 
     new SlashCommandBuilder()
       .setName("stop")
-      .setDescription("ปิด DST server แบบ graceful (save ก่อนปิด)"),
+      .setDescription(t("cmd_stop")),
 
     new SlashCommandBuilder()
       .setName("restart")
-      .setDescription("รีสตาร์ท DST server"),
+      .setDescription(t("cmd_restart")),
 
     new SlashCommandBuilder()
       .setName("status")
-      .setDescription("ดูสถานะแต่ละ shard"),
+      .setDescription(t("cmd_status")),
 
     new SlashCommandBuilder()
       .setName("logs")
-      .setDescription("ดู log ล่าสุดของ shard")
+      .setDescription(t("cmd_logs"))
       .addStringOption((o) =>
         o
           .setName("shard")
-          .setDescription("ชื่อ shard (default Master)")
+          .setDescription(t("cmd_logs_shard"))
           .setRequired(false),
       )
       .addIntegerOption((o) =>
         o
           .setName("lines")
-          .setDescription("จำนวนบรรทัด (default 20, สูงสุด 50)")
+          .setDescription(t("cmd_logs_lines"))
           .setMinValue(1)
           .setMaxValue(50)
           .setRequired(false),
@@ -64,33 +66,33 @@ export function buildCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
 
     new SlashCommandBuilder()
       .setName("players")
-      .setDescription("ดูผู้เล่นที่ออนไลน์อยู่"),
+      .setDescription(t("cmd_players")),
 
     new SlashCommandBuilder()
       .setName("mods")
-      .setDescription("ดูม็อดที่ server เปิดใช้ (อ่านจาก modoverrides.lua)"),
+      .setDescription(t("cmd_mods")),
 
     new SlashCommandBuilder()
       .setName("announce")
-      .setDescription("ประกาศข้อความให้ผู้เล่นทุกคน")
+      .setDescription(t("cmd_announce"))
       .addStringOption((o) =>
         o
           .setName("message")
-          .setDescription("ข้อความที่จะประกาศ")
+          .setDescription(t("cmd_announce_message"))
           .setRequired(true),
       ),
 
     new SlashCommandBuilder()
       .setName("save")
-      .setDescription("บันทึกโลกทันที"),
+      .setDescription(t("cmd_save")),
 
     new SlashCommandBuilder()
       .setName("rollback")
-      .setDescription("ย้อนโลกกลับ n save (ย้อนไม่ได้ — มีปุ่มยืนยัน + backup ก่อน)")
+      .setDescription(t("cmd_rollback"))
       .addIntegerOption((o) =>
         o
           .setName("count")
-          .setDescription("จำนวน save ที่จะย้อน (default 1, สูงสุด 5)")
+          .setDescription(t("cmd_rollback_count"))
           .setMinValue(1)
           .setMaxValue(5)
           .setRequired(false),
@@ -98,33 +100,33 @@ export function buildCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
 
     new SlashCommandBuilder()
       .setName("regenerate")
-      .setDescription("สร้างโลกใหม่ทั้งหมด (ทำลายเซฟปัจจุบัน — มีปุ่มยืนยัน + backup ก่อน)"),
+      .setDescription(t("cmd_regenerate")),
 
     new SlashCommandBuilder()
       .setName("backup")
-      .setDescription("จัดการ backup เซฟของ cluster")
+      .setDescription(t("cmd_backup"))
       .addSubcommand((sub) =>
         sub
           .setName("create")
-          .setDescription("สร้าง backup ใหม่")
+          .setDescription(t("cmd_backup_create"))
           .addStringOption((o) =>
             o
               .setName("label")
-              .setDescription("ป้ายกำกับต่อท้ายชื่อไฟล์ (เช่น before-event)")
+              .setDescription(t("cmd_backup_label"))
               .setRequired(false),
           ),
       )
       .addSubcommand((sub) =>
-        sub.setName("list").setDescription("ดูรายการ backup ที่มี"),
+        sub.setName("list").setDescription(t("cmd_backup_list")),
       )
       .addSubcommand((sub) =>
         sub
           .setName("restore")
-          .setDescription("กู้ backup ทับโลกปัจจุบัน (ต้อง /stop ก่อน — มีปุ่มยืนยัน)")
+          .setDescription(t("cmd_backup_restore"))
           .addStringOption((o) =>
             o
               .setName("file")
-              .setDescription("ชื่อไฟล์ backup (พิมพ์เพื่อค้นหา — มี autocomplete)")
+              .setDescription(t("cmd_backup_file"))
               .setRequired(true)
               .setAutocomplete(true),
           ),
@@ -132,18 +134,18 @@ export function buildCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
 
     new SlashCommandBuilder()
       .setName("config")
-      .setDescription("ดู/แก้ config ที่อนุญาตใน cluster.ini (มีผลตอน restart)")
+      .setDescription(t("cmd_config"))
       .addSubcommand((sub) =>
-        sub.setName("show").setDescription("แสดงค่า config ปัจจุบัน"),
+        sub.setName("show").setDescription(t("cmd_config_show")),
       )
       .addSubcommand((sub) =>
         sub
           .setName("set")
-          .setDescription("ตั้งค่า config (เฉพาะ key ที่ whitelist)")
+          .setDescription(t("cmd_config_set"))
           .addStringOption((o) => {
             o
               .setName("key")
-              .setDescription("key ที่จะตั้ง")
+              .setDescription(t("cmd_config_key"))
               .setRequired(true);
             for (const c of configKeyChoices) o.addChoices(c);
             return o;
@@ -151,7 +153,7 @@ export function buildCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
           .addStringOption((o) =>
             o
               .setName("value")
-              .setDescription("ค่าใหม่")
+              .setDescription(t("cmd_config_value"))
               .setRequired(true),
           ),
       ),

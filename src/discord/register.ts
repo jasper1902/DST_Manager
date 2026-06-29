@@ -7,7 +7,7 @@ import { buildCommands } from "./commands.js";
  * เรียกได้ทั้งจาก bot ตอน start (อัตโนมัติทุกครั้ง) และจากสคริปต์ `bun run register`
  */
 export async function registerCommands(config: AppConfig): Promise<void> {
-  const commands = buildCommands();
+  const commands = buildCommands(config.language);
   const rest = new REST({ version: "10" }).setToken(config.discord.token);
   await rest.put(
     Routes.applicationGuildCommands(config.discord.clientId, config.discord.guildId),

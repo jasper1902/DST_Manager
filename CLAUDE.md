@@ -6,6 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A manager for a **Don't Starve Together (DST) dedicated server**, controlled via a **Discord bot** and a **local web UI**. Runs on **bun** (TypeScript executed directly, no Node/transpile step) as a single process. Most comments and user-facing strings are in Thai; match that when editing existing files.
 
+**Target platform: Windows 11.** This project is developed and run on a Windows 11 base. Assume a Windows environment — use Windows-native tooling and conventions (PowerShell, `taskkill /T /F`, backslash paths, the bundled `tar`, `dst-manager.exe`). The Linux/macOS notes in this file are incidental; Windows 11 is the primary and only supported development/runtime target.
+
+**Runtime: bun.** [bun](https://bun.sh) is the runtime — TypeScript (`.ts`) is executed directly, no Node.js and no transpile/build step for development. Use `bun` for everything (`bun install`, `bun start`, `bun run typecheck`, `bun --compile` for the standalone exe); do not assume `node`/`npm` are present.
+
 Core idea: there is **no RCON**. The manager supervises the DST server binary as a child process, sends Lua console commands via **stdin** (`-console` flag), reads `stdout`/`stderr` line-by-line, and edits `cluster.ini` directly. Because it spawns the real binary, **the bot must run on the same machine/user as the DST install**.
 
 The server binary is **not** installed manually — the manager **auto-downloads it via SteamCMD** (app id `343050`, `login anonymous`) from a button in the web UI. Everything lives next to the executable in a fixed layout (`appBaseDir()` in `dst/paths.ts` = the exe's folder when compiled, else cwd):

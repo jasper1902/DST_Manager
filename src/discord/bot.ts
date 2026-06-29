@@ -16,6 +16,7 @@ import {
 import type { AppConfig } from "../config.js";
 import { formatSize } from "../dst/backup.js";
 import { setConfig, showConfig, WHITELIST } from "../dst/clusterConfig.js";
+import { makeT, type T } from "../i18n.js";
 import type { DSTManager, ManagerCrashEvent } from "../dst/manager.js";
 import { ensureChannels, type ProvisionedChannels } from "./channels.js";
 import { CONTROL_COMMANDS } from "./commands.js";
@@ -87,7 +88,7 @@ async function provisionAndStart(
     const channels = await ensureChannels(guild, config);
     onReady(channels); // ให้ interaction handler ใช้ได้ทันที
 
-    await ensureControlPanel(client, channels.controlChannelId);
+    await ensureControlPanel(client, channels.controlChannelId, config.language);
     console.log(`✓ Control panel: ห้อง ${channels.controlChannelId}`);
 
     attachLogMirror(client, manager, channels.logChannelId);
@@ -169,14 +170,15 @@ async function handleCommand(
   channels: ProvisionedChannels | null,
 ): Promise<void> {
   const name = interaction.commandName;
+  const t = makeT(config.language);
 
   // role check สำหรับกลุ่ม control
   if (CONTROL_COMMANDS.has(name)) {
     const ok = await isAuthorized(interaction.guild, interaction.user.id, config.discord.adminRoleId);
     if (!ok) {
-      await logAction(interaction.client, channels, interaction.user, `❌ ${summarizeCommand(interaction)} (ไม่มีสิทธิ์)`);
+      await logAction(interaction.client, channels, interaction.user, `❌ ${summarizeCommand(interaction)} ${t("no_perm_suffix")}`);
       await interaction.reply({
-        content: "❌ คุณไม่มีสิทธิ์ใช้คำสั่งนี้",
+        content: t("cmd_no_permission"),
         flags: MessageFlags.Ephemeral,
       });
       return;
@@ -188,40 +190,40 @@ async function handleCommand(
   try {
     switch (name) {
       case "start":
-        return await cmdStart(interaction, manager);
+        return await cmdStart(interaction, manager, t);
       case "stop":
-        return await cmdStop(interaction, manager);
+        return await cmdStop(interaction, manager, t);
       case "restart":
-        return await cmdRestart(interaction, manager);
+        return await cmdRestart(interaction, manager, t);
       case "status":
         return await cmdStatus(interaction, manager);
       case "logs":
-        return await cmdLogs(interaction, manager);
+        return await cmdLogs(interaction, manager, t);
       case "players":
-        return await cmdPlayers(interaction, manager);
+        return await cmdPlayers(interaction, manager, t);
       case "mods":
-        return await cmdMods(interaction, manager);
+        return await cmdMods(interaction, manager, t);
       case "announce":
-        return await cmdAnnounce(interaction, manager);
+        return await cmdAnnounce(interaction, manager, t);
       case "save":
-        return await cmdSave(interaction, manager);
+        return await cmdSave(interaction, manager, t);
       case "rollback":
-        return await cmdRollback(interaction, manager);
+        return await cmdRollback(interaction, manager, t);
       case "regenerate":
-        return await cmdRegenerate(interaction, manager);
+        return await cmdRegenerate(interaction, manager, t);
       case "backup":
-        return await cmdBackup(interaction, manager);
+        return await cmdBackup(interaction, manager, t);
       case "config":
-        return await cmdConfig(interaction, config, manager);
+        return await cmdConfig(interaction, config, manager, t);
       default:
         await interaction.reply({
-          content: `ไม่รู้จักคำสั่ง: ${name}`,
+          content: t("unknown_command", name),
           flags: MessageFlags.Ephemeral,
         });
     }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    const content = `⚠️ เกิดข้อผิดพลาด: ${msg}`;
+    const content = t("error_occurred", msg);
     if (interaction.deferred || interaction.replied) {
       await interaction.editReply({ content });
     } else {
@@ -275,21 +277,22 @@ async function handleButton(
 ): Promise<void> {
   if (!interaction.customId.startsWith("ctrl:")) return;
   const action = interaction.customId.slice("ctrl:".length);
+  const t = makeT(config.language);
 
   const ok = await isAuthorized(interaction.guild, interaction.user.id, config.discord.adminRoleId);
   if (!ok) {
-    await logAction(interaction.client, channels, interaction.user, `❌ [ปุ่ม] ${action} (ไม่มีสิทธิ์)`);
-    await interaction.reply({ content: "❌ คุณไม่มีสิทธิ์ใช้ปุ่มนี้", flags: MessageFlags.Ephemeral });
+    await logAction(interaction.client, channels, interaction.user, `❌ ${t("button_prefix")} ${action} ${t("no_perm_suffix")}`);
+    await interaction.reply({ content: t("btn_no_permission"), flags: MessageFlags.Ephemeral });
     return;
   }
 
-  void logAction(interaction.client, channels, interaction.user, `[ปุ่ม] ${action}`);
+  void logAction(interaction.client, channels, interaction.user, `${t("button_prefix")} ${action}`);
 
   try {
-    await runControlAction(interaction, manager, action);
+    await runControlAction(interaction, manager, action, t);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    const content = `⚠️ เกิดข้อผิดพลาด: ${msg}`;
+    const content = t("error_occurred", msg);
     if (interaction.deferred || interaction.replied) await interaction.editReply({ content });
     else await interaction.reply({ content, flags: MessageFlags.Ephemeral });
   }
@@ -300,33 +303,32 @@ async function runControlAction(
   interaction: ButtonInteraction,
   manager: DSTManager,
   action: string,
+  t: T,
 ): Promise<void> {
   switch (action) {
     case "start":
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       await manager.start();
-      return void (await interaction.editReply("🟢 สั่ง start แล้ว"));
+      return void (await interaction.editReply(t("start_done_short")));
     case "stop":
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       await manager.stop();
-      return void (await interaction.editReply("🔴 ปิด server เรียบร้อย (save ก่อนปิด)"));
+      return void (await interaction.editReply(t("stop_done")));
     case "restart":
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       await manager.restart();
-      return void (await interaction.editReply("🔄 รีสตาร์ทเรียบร้อย"));
+      return void (await interaction.editReply(t("restart_done")));
     case "save": {
       const n = manager.save();
       return void (await interaction.reply({
-        content: n ? `💾 สั่ง save แล้ว (${n} shard)` : "⚠️ ไม่มี shard ที่กำลังรัน",
+        content: n ? t("save_done", n) : t("no_shard_running"),
         flags: MessageFlags.Ephemeral,
       }));
     }
     case "backup": {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const info = await manager.backup();
-      return void (await interaction.editReply(
-        `💾 backup: \`${info.file}\` (${formatSize(info.size)})`,
-      ));
+      return void (await interaction.editReply(t("backup_short", info.file, formatSize(info.size))));
     }
     case "status": {
       const lines = manager.status().map((s) => {
@@ -343,13 +345,13 @@ async function runControlAction(
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const players = await manager.listPlayers();
       const body = players.length
-        ? `👥 ผู้เล่นออนไลน์ (${players.length})\n${players.map((p, i) => `${i + 1}. ${p}`).join("\n")}`
-        : "ไม่มีผู้เล่นออนไลน์ (หรือ server ไม่ได้รัน)";
+        ? `${t("players_online", players.length)}\n${players.map((p, i) => `${i + 1}. ${p}`).join("\n")}`
+        : t("no_players");
       return void (await interaction.editReply(body));
     }
     default:
       return void (await interaction.reply({
-        content: `ไม่รู้จักปุ่ม: ${action}`,
+        content: t("unknown_button", action),
         flags: MessageFlags.Ephemeral,
       }));
   }
@@ -360,28 +362,31 @@ async function runControlAction(
 async function cmdStart(
   interaction: ChatInputCommandInteraction,
   manager: DSTManager,
+  t: T,
 ): Promise<void> {
   await interaction.deferReply();
   await manager.start();
-  await interaction.editReply("🟢 สั่ง start แล้ว (Master ก่อน แล้ว shard อื่น)");
+  await interaction.editReply(t("start_done"));
 }
 
 async function cmdStop(
   interaction: ChatInputCommandInteraction,
   manager: DSTManager,
+  t: T,
 ): Promise<void> {
   await interaction.deferReply();
   await manager.stop();
-  await interaction.editReply("🔴 ปิด server เรียบร้อย (save ก่อนปิด)");
+  await interaction.editReply(t("stop_done"));
 }
 
 async function cmdRestart(
   interaction: ChatInputCommandInteraction,
   manager: DSTManager,
+  t: T,
 ): Promise<void> {
   await interaction.deferReply();
   await manager.restart();
-  await interaction.editReply("🔄 รีสตาร์ทเรียบร้อย");
+  await interaction.editReply(t("restart_done"));
 }
 
 async function cmdStatus(
@@ -399,43 +404,46 @@ async function cmdStatus(
 async function cmdLogs(
   interaction: ChatInputCommandInteraction,
   manager: DSTManager,
+  t: T,
 ): Promise<void> {
   const shard = interaction.options.getString("shard") ?? "Master";
   const lines = interaction.options.getInteger("lines") ?? 20;
   const log = manager.logs(shard, lines);
-  const body = log.length ? log.join("\n") : "(ยังไม่มี log)";
+  const body = log.length ? log.join("\n") : t("no_logs");
   await interaction.reply({
-    content: `**${shard}** — ${log.length} บรรทัดล่าสุด\n${fitCodeBlock(body)}`,
+    content: `${t("logs_header", shard, log.length)}\n${fitCodeBlock(body)}`,
   });
 }
 
 async function cmdPlayers(
   interaction: ChatInputCommandInteraction,
   manager: DSTManager,
+  t: T,
 ): Promise<void> {
   await interaction.deferReply();
   const players = await manager.listPlayers();
   if (players.length === 0) {
-    await interaction.editReply("ไม่มีผู้เล่นออนไลน์ (หรือ server ไม่ได้รัน)");
+    await interaction.editReply(t("no_players"));
     return;
   }
   const list = players.map((p, i) => `${i + 1}. ${p}`).join("\n");
-  await interaction.editReply(`👥 ผู้เล่นออนไลน์ (${players.length})\n${list}`);
+  await interaction.editReply(`${t("players_online", players.length)}\n${list}`);
 }
 
 async function cmdMods(
   interaction: ChatInputCommandInteraction,
   manager: DSTManager,
+  t: T,
 ): Promise<void> {
   // resolve ชื่อม็อดยิง Steam API → อาจช้า → defer ก่อน
   await interaction.deferReply();
   const mods = await manager.getMods();
   if (mods === null) {
-    await interaction.editReply("ℹ️ ไม่พบ `modoverrides.lua` — server นี้ไม่ได้เปิดใช้ม็อด");
+    await interaction.editReply(t("mods_no_file"));
     return;
   }
   if (mods.length === 0) {
-    await interaction.editReply("ℹ️ มีไฟล์ม็อดแต่ไม่มีม็อดที่เปิดใช้");
+    await interaction.editReply(t("mods_none_enabled"));
     return;
   }
   const on = mods.filter((m) => m.enabled).length;
@@ -443,7 +451,7 @@ async function cmdMods(
 
   // รายการม็อดอาจยาวเกิน 2000 ตัว/ข้อความ → แบ่งส่งหลายก้อน
   const chunks = chunkLines(lines, 1900);
-  const header = `🧩 ม็อดที่ใช้ (${on}/${mods.length} เปิดอยู่)`;
+  const header = t("mods_header", on, mods.length);
   await interaction.editReply(`${header}\n${chunks[0] ?? "—"}`);
   for (const chunk of chunks.slice(1)) {
     await interaction.followUp(chunk);
@@ -469,32 +477,34 @@ function chunkLines(lines: string[], max: number): string[] {
 async function cmdAnnounce(
   interaction: ChatInputCommandInteraction,
   manager: DSTManager,
+  t: T,
 ): Promise<void> {
   const message = interaction.options.getString("message", true);
   const sent = manager.announce(message);
   if (sent === 0) {
     await interaction.reply({
-      content: "⚠️ ไม่มี shard ที่กำลังรัน — ประกาศไม่ออก",
+      content: t("announce_none"),
       flags: MessageFlags.Ephemeral,
     });
     return;
   }
-  await interaction.reply(`📢 ประกาศแล้ว (${sent} shard): ${message}`);
+  await interaction.reply(t("announce_done", sent, message));
 }
 
 async function cmdSave(
   interaction: ChatInputCommandInteraction,
   manager: DSTManager,
+  t: T,
 ): Promise<void> {
   const sent = manager.save();
   if (sent === 0) {
     await interaction.reply({
-      content: "⚠️ ไม่มี shard ที่กำลังรัน",
+      content: t("no_shard_running"),
       flags: MessageFlags.Ephemeral,
     });
     return;
   }
-  await interaction.reply(`💾 สั่ง save แล้ว (${sent} shard)`);
+  await interaction.reply(t("save_done", sent));
 }
 
 // ── destructive ops (ยืนยันด้วยปุ่มก่อนทำ + backup อัตโนมัติ) ────────────
@@ -504,10 +514,11 @@ async function requireRunning(
   interaction: ChatInputCommandInteraction,
   manager: DSTManager,
   action: string,
+  t: T,
 ): Promise<boolean> {
   if (manager.status().some((s) => s.running)) return true;
   await interaction.reply({
-    content: `⚠️ server ไม่ได้รันอยู่ — ${action} ไม่ได้`,
+    content: t("server_not_running_action", action),
     flags: MessageFlags.Ephemeral,
   });
   return false;
@@ -519,14 +530,15 @@ async function requireRunning(
  */
 async function confirmAndRun(
   interaction: ChatInputCommandInteraction,
+  t: T,
   warning: string,
   run: () => Promise<string>,
 ): Promise<void> {
   const confirmId = `confirm:${interaction.id}`;
   const cancelId = `cancel:${interaction.id}`;
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId(confirmId).setLabel("ยืนยัน").setStyle(ButtonStyle.Danger),
-    new ButtonBuilder().setCustomId(cancelId).setLabel("ยกเลิก").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(confirmId).setLabel(t("confirm")).setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId(cancelId).setLabel(t("cancel")).setStyle(ButtonStyle.Secondary),
   );
   await interaction.reply({
     content: warning,
@@ -542,18 +554,18 @@ async function confirmAndRun(
       filter: (i) => i.user.id === interaction.user.id,
     });
     if (click.customId !== confirmId) {
-      await click.update({ content: "❌ ยกเลิกแล้ว", components: [] });
+      await click.update({ content: t("cancelled"), components: [] });
       return;
     }
-    await click.update({ content: "⏳ กำลังดำเนินการ...", components: [] });
+    await click.update({ content: t("processing"), components: [] });
     const result = await run();
     await interaction.editReply({ content: result, components: [] });
   } catch (err) {
     // timeout (ไม่กดอะไร) หรือ run() พัง
     const isTimeout = err instanceof Error && err.message.includes("time");
     const content = isTimeout
-      ? "⌛ หมดเวลายืนยัน — ยกเลิกอัตโนมัติ"
-      : `⚠️ ล้มเหลว: ${err instanceof Error ? err.message : String(err)}`;
+      ? t("confirm_timeout")
+      : t("failed", err instanceof Error ? err.message : String(err));
     await interaction.editReply({ content, components: [] }).catch(() => {});
   }
 }
@@ -561,17 +573,18 @@ async function confirmAndRun(
 async function cmdRollback(
   interaction: ChatInputCommandInteraction,
   manager: DSTManager,
+  t: T,
 ): Promise<void> {
-  if (!(await requireRunning(interaction, manager, "rollback"))) return;
+  if (!(await requireRunning(interaction, manager, "rollback", t))) return;
   const count = interaction.options.getInteger("count") ?? 1;
   await confirmAndRun(
     interaction,
-    `⚠️ **Rollback ${count} save** — ย้อนโลกกลับ ความคืบหน้าหลังจุดนั้นจะหาย\n` +
-      `ระบบจะ backup ปัจจุบันก่อนอัตโนมัติ — กด "ยืนยัน" ภายใน 30 วินาที`,
+    t,
+    t("rollback_warning", count),
     async () => {
       const info = await manager.backup("pre-rollback");
       manager.rollback(count);
-      return `↩️ rollback ${count} save แล้ว\n💾 backup ก่อนหน้า: \`${info.file}\``;
+      return t("rollback_done", count, info.file);
     },
   );
 }
@@ -579,16 +592,17 @@ async function cmdRollback(
 async function cmdRegenerate(
   interaction: ChatInputCommandInteraction,
   manager: DSTManager,
+  t: T,
 ): Promise<void> {
-  if (!(await requireRunning(interaction, manager, "regenerate"))) return;
+  if (!(await requireRunning(interaction, manager, "regenerate", t))) return;
   await confirmAndRun(
     interaction,
-    "🔥 **Regenerate world** — สร้างโลกใหม่ทั้งหมด เซฟปัจจุบันจะถูกทำลายถาวร\n" +
-      'ระบบจะ backup ปัจจุบันก่อนอัตโนมัติ — กด "ยืนยัน" ภายใน 30 วินาที',
+    t,
+    t("regenerate_warning"),
     async () => {
       const info = await manager.backup("pre-regenerate");
       manager.regenerateWorld();
-      return `🌱 สั่ง regenerate world แล้ว\n💾 backup ก่อนหน้า: \`${info.file}\``;
+      return t("regenerate_done", info.file);
     },
   );
 }
@@ -596,6 +610,7 @@ async function cmdRegenerate(
 async function cmdBackup(
   interaction: ChatInputCommandInteraction,
   manager: DSTManager,
+  t: T,
 ): Promise<void> {
   const sub = interaction.options.getSubcommand();
 
@@ -603,16 +618,14 @@ async function cmdBackup(
     await interaction.deferReply();
     const label = interaction.options.getString("label") ?? undefined;
     const info = await manager.backup(label);
-    await interaction.editReply(
-      `💾 backup สำเร็จ: \`${info.file}\` (${formatSize(info.size)})`,
-    );
+    await interaction.editReply(t("backup_created", info.file, formatSize(info.size)));
     return;
   }
 
   if (sub === "list") {
     const list = manager.listBackups();
     if (list.length === 0) {
-      await interaction.reply("ยังไม่มี backup — ใช้ `/backup create` สร้างได้");
+      await interaction.reply(t("backup_list_empty"));
       return;
     }
     const body = list
@@ -622,7 +635,7 @@ async function cmdBackup(
           `${i + 1}. \`${b.file}\` — ${formatSize(b.size)} — ${b.mtime.toLocaleString()}`,
       )
       .join("\n");
-    await interaction.reply(`💾 backup ล่าสุด (${list.length})\n${body}`);
+    await interaction.reply(`${t("backup_list_header", list.length)}\n${body}`);
     return;
   }
 
@@ -630,18 +643,18 @@ async function cmdBackup(
   const file = interaction.options.getString("file", true);
   if (manager.status().some((s) => s.running)) {
     await interaction.reply({
-      content: "⚠️ ต้อง `/stop` ให้ server หยุดก่อนถึงจะ restore ได้",
+      content: t("restore_must_stop"),
       flags: MessageFlags.Ephemeral,
     });
     return;
   }
   await confirmAndRun(
     interaction,
-    `⚠️ **Restore** \`${file}\` ทับโลกปัจจุบัน — สถานะปัจจุบันจะถูกเขียนทับ\n` +
-      'กด "ยืนยัน" ภายใน 30 วินาที',
+    t,
+    t("restore_warning", file),
     async () => {
       await manager.restore(file);
-      return `✓ restore \`${file}\` แล้ว — ใช้ \`/start\` เพื่อเปิด server`;
+      return t("restore_done", file);
     },
   );
 }
@@ -650,6 +663,7 @@ async function cmdConfig(
   interaction: ChatInputCommandInteraction,
   config: AppConfig,
   manager: DSTManager,
+  t: T,
 ): Promise<void> {
   // config อ่อนไหว (password) → ตอบแบบ ephemeral เสมอ
   const sub = interaction.options.getSubcommand();
@@ -673,15 +687,13 @@ async function cmdConfig(
     const value = interaction.options.getString("value", true);
     const result = await setConfig(config.dst, key, value);
     const shown = SENSITIVE_KEYS.has(result.key) ? "•••" : result.value;
-    await interaction.editReply(
-      `✓ ตั้งค่า \`${result.key}\` = \`${shown}\`\n⚠️ มีผลหลัง /restart`,
-    );
+    await interaction.editReply(t("config_set", result.key, shown));
     return;
   }
 
   // unreachable แต่กัน type
   await interaction.reply({
-    content: `subcommand ไม่รองรับ: ${sub}`,
+    content: t("unsupported_subcommand", sub),
     flags: MessageFlags.Ephemeral,
   });
   void WHITELIST;
@@ -696,11 +708,12 @@ async function sendCrashAlert(
   channelId: string,
   e: ManagerCrashEvent,
 ): Promise<void> {
+  const t = makeT(config.language);
   const roleId = config.discord.adminRoleId;
   const ping = roleId ? `<@&${roleId}> ` : "";
   const text = e.restarting
-    ? `${ping}⚠️ shard **${e.shard}** ล่ม (exit ${e.code ?? "?"}) — กำลัง restart อัตโนมัติ`
-    : `${ping}🛑 shard **${e.shard}** ล่มซ้ำหลายครั้งในเวลาสั้น ๆ — หยุด auto-restart แล้ว ต้องเข้าไปตรวจเอง`;
+    ? `${ping}${t("crash_restarting", e.shard, String(e.code ?? "?"))}`
+    : `${ping}${t("crash_giveup", e.shard)}`;
   try {
     const channel = await client.channels.fetch(channelId);
     if (channel?.isTextBased() && channel.isSendable()) {

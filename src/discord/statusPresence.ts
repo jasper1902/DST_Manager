@@ -7,6 +7,7 @@ import {
 } from "discord.js";
 import type { AppConfig } from "../config.js";
 import { showConfig } from "../dst/clusterConfig.js";
+import { makeT, seasonLabel, type T } from "../i18n.js";
 import type { DSTManager, ShardStatus } from "../dst/manager.js";
 import type { ModEntry } from "../dst/mods.js";
 
@@ -53,19 +54,6 @@ interface StatusSnapshot {
   season: string | null;
   /** ม็อดที่เปิดใช้ (จาก modoverrides.lua); null = ไม่ได้ลงม็อด */
   mods: ModEntry[] | null;
-}
-
-/** map ฤดู DST → ข้อความไทย + emoji */
-const SEASON_TH: Record<string, string> = {
-  autumn: "🍂 ใบไม้ร่วง",
-  winter: "❄️ ฤดูหนาว",
-  spring: "🌷 ใบไม้ผลิ",
-  summer: "☀️ ฤดูร้อน",
-};
-
-function seasonText(season: string | null): string {
-  if (!season) return "—";
-  return SEASON_TH[season.toLowerCase()] ?? season;
 }
 
 function truncate(s: string, max: number): string {
@@ -140,6 +128,11 @@ export class ServerStatusPresence {
     this.textChannelId = textChannelId;
   }
 
+  /** ตัวแปลภาษา (อิงค่า config ตอน bot start; เปลี่ยนภาษามีผลรอบ restart) */
+  private get t(): T {
+    return makeT(this.config.language);
+  }
+
   start(): void {
     const msgMs = this.config.status.messageIntervalSec * 1000;
     const nameMs = this.config.status.nameIntervalSec * 1000;
@@ -211,8 +204,8 @@ export class ServerStatusPresence {
     const sec = Math.floor((Date.now() - this.startedAt) / 1000);
     const h = Math.floor(sec / 3600);
     const m = Math.floor((sec % 3600) / 60);
-    if (h > 0) return `${h} ชม. ${m} นาที`;
-    return `${m} นาที`;
+    if (h > 0) return this.t("uptime_hm", h, m);
+    return this.t("uptime_m", m);
   }
 
   // ── render ──────────────────────────────────────────────────────────
@@ -224,12 +217,14 @@ export class ServerStatusPresence {
 
   /** ชื่อ voice channel: โชว์แค่สถานะ server + จำนวนผู้เล่น (limit 100 ตัว) */
   private buildVoiceName(s: StatusSnapshot): string {
-    if (!s.anyRunning) return "🔴 ออฟไลน์";
+    const t = this.t;
+    if (!s.anyRunning) return t("voice_offline");
     const max = s.cluster && s.cluster.maxPlayers !== "(unset)" ? `/${s.cluster.maxPlayers}` : "";
-    return truncate(`🟢 ออนไลน์ • ${s.players.length}${max} คน`, 100);
+    return truncate(t("voice_online", s.players.length, max), 100);
   }
 
   private buildEmbed(s: StatusSnapshot): EmbedBuilder {
+    const t = this.t;
     const c = s.cluster;
     const color = !s.anyRunning ? COLOR_OFFLINE : s.allRunning ? COLOR_ONLINE : COLOR_PARTIAL;
 
@@ -242,41 +237,41 @@ export class ServerStatusPresence {
       ? truncate(s.players.map((p, i) => `${i + 1}. ${p}`).join("\n"), 1000)
       : "—";
 
-    const dayText = s.anyRunning && s.day !== null ? `วันที่ ${s.day}` : "—";
+    const dayText = s.anyRunning && s.day !== null ? t("day_value", s.day) : "—";
 
     const embed = new EmbedBuilder()
       .setTitle(`Server name: ${this.serverName(c)}`)
       .setColor(color)
       .addFields(
-        { name: "สถานะ", value: shardText || "—", inline: true },
+        { name: t("field_status"), value: shardText || "—", inline: true },
         {
-          name: "ผู้เล่น",
+          name: t("field_players"),
           value: s.anyRunning ? `${s.players.length}${maxText}` : "—",
           inline: true,
         },
-        { name: "วัน", value: dayText, inline: true },
-        { name: "ฤดู", value: s.anyRunning ? seasonText(s.season) : "—", inline: true },
-        { name: "Uptime", value: this.uptimeText(), inline: true },
+        { name: t("field_day"), value: dayText, inline: true },
+        { name: t("field_season"), value: s.anyRunning ? seasonLabel(s.season, this.config.language) : "—", inline: true },
+        { name: t("field_uptime"), value: this.uptimeText(), inline: true },
       );
 
     if (c) {
       if (this.config.status.showPassword) {
-        const pw = c.password && c.password !== "(unset)" ? `\`${c.password}\`` : "🔓 ไม่มี";
-        embed.addFields({ name: "รหัสผ่าน", value: pw, inline: true });
+        const pw = c.password && c.password !== "(unset)" ? `\`${c.password}\`` : t("password_none");
+        embed.addFields({ name: t("field_password"), value: pw, inline: true });
       }
       if (c.gameMode !== "(unset)") {
-        embed.addFields({ name: "โหมด", value: c.gameMode, inline: true });
+        embed.addFields({ name: t("field_mode"), value: c.gameMode, inline: true });
       }
       if (c.pvp !== "(unset)") {
-        embed.addFields({ name: "PvP", value: c.pvp === "true" ? "เปิด" : "ปิด", inline: true });
+        embed.addFields({ name: t("field_pvp"), value: c.pvp === "true" ? t("on") : t("off"), inline: true });
       }
       if (c.intention !== "(unset)") {
-        embed.addFields({ name: "ประเภท", value: c.intention, inline: true });
+        embed.addFields({ name: t("field_intention"), value: c.intention, inline: true });
       }
     }
 
-    embed.addFields({ name: "รายชื่อผู้เล่น", value: playerList, inline: false });
-    embed.setFooter({ text: `${MARKER} • อัปเดตล่าสุด` }).setTimestamp(new Date());
+    embed.addFields({ name: t("field_player_list"), value: playerList, inline: false });
+    embed.setFooter({ text: `${MARKER} • ${t("last_updated")}` }).setTimestamp(new Date());
     return embed;
   }
 
@@ -318,13 +313,14 @@ export class ServerStatusPresence {
 
     const rest = enabled.length - shown;
     if (rest > 0 && chunks.length > 0) {
-      chunks[chunks.length - 1] += `\n… +${rest} ม็อด`;
+      chunks[chunks.length - 1] += `\n${this.t("mods_more", rest)}`;
     }
 
+    const t = this.t;
     return chunks.map((desc, i) =>
       new EmbedBuilder()
         .setColor(COLOR_MODS)
-        .setTitle(i === 0 ? `🧩 ม็อดที่ใช้ (${enabled.length})` : "🧩 ม็อด (ต่อ)")
+        .setTitle(i === 0 ? t("mods_used", enabled.length) : t("mods_continued"))
         .setDescription(desc),
     );
   }

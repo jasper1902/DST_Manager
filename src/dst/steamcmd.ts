@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { DSTConfig } from "../config.js";
 import { appBaseDir } from "./paths.js";
 
@@ -42,19 +42,41 @@ export function hasSteamcmd(): boolean {
 
 type OnLine = (line: string) => void;
 
-/** แตก archive (zip บน Win / tar.gz บน *nix) ด้วย tar ที่ติดมากับ OS — pattern เดียวกับ backup.ts */
+/**
+ * แตก archive bootstrapper: zip บน Windows / tar.gz บน *nix
+ *
+ * - Windows: ใช้ PowerShell Expand-Archive (built-in, รองรับ zip แน่นอน)
+ *   ห้ามใช้ `tar` เพราะ `tar` ใน PATH อาจเป็น GNU tar (เช่นที่มากับ Git) ที่อ่าน zip ไม่ได้
+ *   ("This does not look like a tar archive") — มีแต่ bsdtar (System32\tar.exe) ที่อ่าน zip ได้
+ * - *nix: tar -xzf (.tar.gz)
+ *
+ * ส่งเป็น "ชื่อไฟล์ล้วน" (basename) + รันใน cwd ที่ไฟล์อยู่ เลี่ยงปัญหา bsdtar ตีความ
+ * drive letter (C:\…) ว่าเป็น remote host
+ */
 function extractArchive(file: string, cwd: string): Promise<void> {
-  const args = process.platform === "win32" ? ["-xf", file] : ["-xzf", file];
+  const name = basename(file);
   return new Promise((resolve, reject) => {
-    const child = spawn("tar", args, { windowsHide: true, cwd });
+    const child =
+      process.platform === "win32"
+        ? spawn(
+            "powershell",
+            [
+              "-NoProfile",
+              "-NonInteractive",
+              "-Command",
+              `Expand-Archive -LiteralPath '${name.replace(/'/g, "''")}' -DestinationPath . -Force`,
+            ],
+            { windowsHide: true, cwd },
+          )
+        : spawn("tar", ["-xzf", name], { windowsHide: true, cwd });
     let stderr = "";
-    child.stderr.on("data", (c: Buffer) => {
+    child.stderr?.on("data", (c: Buffer) => {
       stderr += c.toString("utf8");
     });
-    child.on("error", (err) => reject(new Error(`tar ทำงานไม่ได้: ${err.message}`)));
+    child.on("error", (err) => reject(new Error(`แตกไฟล์ steamcmd ไม่ได้: ${err.message}`)));
     child.on("exit", (code) => {
       if (code === 0) resolve();
-      else reject(new Error(`แตกไฟล์ steamcmd ไม่ได้ (tar exit ${code ?? "?"}): ${stderr.trim()}`));
+      else reject(new Error(`แตกไฟล์ steamcmd ไม่ได้ (exit ${code ?? "?"}): ${stderr.trim()}`));
     });
   });
 }
@@ -81,11 +103,14 @@ export async function ensureSteamCmd(onLine: OnLine): Promise<void> {
   onLine("ติดตั้ง SteamCMD เรียบร้อย");
 }
 
+/** จำนวนครั้งสูงสุดที่ลองรัน SteamCMD (รันแรกมักอัปเดตตัวเอง+exit 7 → ต้องรันซ้ำ) */
+const MAX_STEAMCMD_ATTEMPTS = 3;
+
 /**
- * รัน SteamCMD ติดตั้ง/อัปเดตตัว server เข้า dst.installDir
+ * รัน SteamCMD ติดตั้ง/อัปเดตตัว server เข้า dst.installDir — คืน exit code
  * force_install_dir ต้องมาก่อน login (ข้อจำกัดของ SteamCMD); validate = ตรวจไฟล์ครบ
  */
-function runSteamcmdInstall(dst: DSTConfig, onLine: OnLine): Promise<void> {
+function runSteamcmdInstall(dst: DSTConfig, onLine: OnLine): Promise<number> {
   const args = [
     "+force_install_dir",
     dst.installDir,
@@ -99,8 +124,15 @@ function runSteamcmdInstall(dst: DSTConfig, onLine: OnLine): Promise<void> {
   return new Promise((resolve, reject) => {
     onLine(`เริ่มติดตั้ง DST server (app ${DST_APP_ID}) → ${dst.installDir}`);
     const child = spawn(steamcmdExe(), args, { windowsHide: true, cwd: steamcmdDir() });
+    // SteamCMD อัปเดต progress สดด้วย \r (เขียนทับบรรทัดเดิม ไม่ใช่ \n) → ต้องตัด \r เป็นเส้นแบ่ง
+    // บรรทัดด้วย ไม่งั้นทั้ง phase จะมาเป็นก้อนเดียวตอนจบ (progress ไม่ขยับระหว่างทาง)
+    // buffer ส่วนท้ายที่ยังไม่จบบรรทัดไว้รอบหน้า กัน parse ครึ่งบรรทัด
+    let buf = "";
     const onChunk = (c: Buffer): void => {
-      for (const line of c.toString("utf8").split(/\r?\n/)) {
+      buf += c.toString("utf8");
+      const parts = buf.split(/\r\n|\r|\n/);
+      buf = parts.pop() ?? "";
+      for (const line of parts) {
         if (line.trim() !== "") onLine(line.trimEnd());
       }
     };
@@ -108,16 +140,31 @@ function runSteamcmdInstall(dst: DSTConfig, onLine: OnLine): Promise<void> {
     child.stderr.on("data", onChunk);
     child.on("error", (err) => reject(new Error(`รัน SteamCMD ไม่ได้: ${err.message}`)));
     child.on("exit", (code) => {
-      // SteamCMD ใช้ exit code 7 (warning) ในบาง flow ที่จริงๆ สำเร็จ — ยึด 0 เป็นหลัก
-      if (code === 0) resolve();
-      else reject(new Error(`SteamCMD จบด้วย exit code ${code ?? "?"} — ตรวจ log ด้านบน`));
+      if (buf.trim() !== "") onLine(buf.trimEnd());
+      resolve(code ?? -1);
     });
   });
 }
 
-/** ดาวน์โหลด SteamCMD (ถ้ายังไม่มี) แล้วติดตั้ง/อัปเดต DST server */
+/**
+ * ดาวน์โหลด SteamCMD (ถ้ายังไม่มี) แล้วติดตั้ง/อัปเดต DST server
+ *
+ * SteamCMD รันครั้งแรกจะอัปเดตตัวเองก่อน → app_update ล้ม ("Missing configuration")
+ * แล้ว process จบด้วย exit code 7 (self-update + restart) — เป็นปกติ ต้องรันซ้ำ
+ * รอบถัด ๆ ไป client พร้อมแล้วจะดาวน์โหลด server จริง (เห็น progress) แล้วจบ exit 0
+ */
 export async function downloadServer(dst: DSTConfig, onLine: OnLine): Promise<void> {
   await ensureSteamCmd(onLine);
-  await runSteamcmdInstall(dst, onLine);
-  onLine("✓ DST server พร้อมใช้งานแล้ว");
+  for (let attempt = 1; attempt <= MAX_STEAMCMD_ATTEMPTS; attempt++) {
+    const code = await runSteamcmdInstall(dst, onLine);
+    if (code === 0) {
+      onLine("✓ DST server พร้อมใช้งานแล้ว");
+      return;
+    }
+    if (code === 7 && attempt < MAX_STEAMCMD_ATTEMPTS) {
+      onLine(`SteamCMD อัปเดตตัวเอง/รีสตาร์ท (exit 7) — กำลังลองใหม่ครั้งที่ ${attempt + 1}...`);
+      continue;
+    }
+    throw new Error(`SteamCMD จบด้วย exit code ${code} — ตรวจ log ด้านบน`);
+  }
 }

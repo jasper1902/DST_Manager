@@ -2,6 +2,7 @@ import { ChannelType, type Guild } from "discord.js";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AppConfig } from "../config.js";
+import { makeT } from "../i18n.js";
 
 /**
  * provision ห้องที่ bot ต้องใช้เอง (ไม่ต้องให้คนกรอก channel ID):
@@ -15,9 +16,6 @@ import type { AppConfig } from "../config.js";
  */
 
 const STATE_FILE = join(process.cwd(), "channels.json");
-
-/** ชื่อเริ่มต้นของ voice channel ก่อน presence อัปเดตรอบแรก */
-const VOICE_INITIAL_NAME = "🔴 ออฟไลน์";
 
 export interface ProvisionedChannels {
   categoryId: string;
@@ -127,7 +125,8 @@ export async function ensureChannels(
     guild,
     saved.statusVoiceChannelId,
     ChannelType.GuildVoice,
-    { name: VOICE_INITIAL_NAME, parent: categoryId },
+    // ชื่อเริ่มต้นก่อน presence อัปเดตรอบแรก — ตามภาษาที่ตั้งไว้
+    { name: makeT(config.language)("voice_offline"), parent: categoryId },
   );
 
   const controlChannelId = await ensureChannel(

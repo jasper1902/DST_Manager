@@ -6,6 +6,7 @@ import {
   EmbedBuilder,
   type Client,
 } from "discord.js";
+import { type Lang, makeT } from "../i18n.js";
 
 /**
  * Control panel: ข้อความถาวรในห้อง control ที่มีปุ่มสั่งงาน
@@ -43,25 +44,21 @@ function buildRows(): ActionRowBuilder<ButtonBuilder>[] {
   return [row1, row2];
 }
 
-function buildEmbed(): EmbedBuilder {
+function buildEmbed(lang: Lang): EmbedBuilder {
   return new EmbedBuilder()
     .setTitle("🎮 DST Control Panel")
-    .setDescription(
-      "กดปุ่มเพื่อสั่งงาน server (เฉพาะผู้มีสิทธิ์ตาม admin role)\n" +
-        "▶️ เปิด · ⏹️ ปิด · 🔄 รีสตาร์ท · 💾 เซฟ · 🗄️ backup · 📊 สถานะ · 👥 ผู้เล่น\n" +
-        "_คำสั่งย้อนไม่ได้ (rollback/regenerate/restore) ใช้ผ่าน slash command เพื่อความปลอดภัย_",
-    )
+    .setDescription(makeT(lang)("control_panel_desc"))
     .setColor(0x5865f2)
     .setFooter({ text: MARKER });
 }
 
 /** ทำให้มี control panel message อันเดียวในห้อง (find-or-create) */
-export async function ensureControlPanel(client: Client, channelId: string): Promise<void> {
+export async function ensureControlPanel(client: Client, channelId: string, lang: Lang): Promise<void> {
   try {
     const ch = await client.channels.fetch(channelId);
     if (!ch || ch.type !== ChannelType.GuildText) return;
 
-    const embed = buildEmbed();
+    const embed = buildEmbed(lang);
     const components = buildRows();
 
     const recent = await ch.messages.fetch({ limit: 25 });

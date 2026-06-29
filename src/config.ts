@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { appBaseDir, gameRootDir } from "./dst/paths.js";
+import { asLang, type Lang } from "./i18n.js";
 
 /**
  * Config ทั้งหมดเก็บใน config.json (ไม่ใช้ .env แล้ว)
@@ -61,6 +62,8 @@ export interface AppConfig {
   logBufferSize: number;
   autoRestart: boolean;
   dailyRestartTime?: string;
+  /** ภาษาของ UI/ข้อความที่ผู้ใช้เห็น (web + Discord); default "en", สลับได้จาก web UI */
+  language: Lang;
 }
 
 /** รูปแบบดิบในไฟล์ (ทุก field optional — เติม default ตอนโหลด) */
@@ -73,6 +76,7 @@ interface RawConfig {
   logBufferSize?: number;
   autoRestart?: boolean;
   dailyRestartTime?: string;
+  language?: string;
 }
 
 export const CONFIG_FILE = join(appBaseDir(), "config.json");
@@ -136,6 +140,7 @@ export function loadConfig(): AppConfig {
     logBufferSize: raw.logBufferSize ?? 500,
     autoRestart: raw.autoRestart ?? true,
     dailyRestartTime: str(raw.dailyRestartTime) || undefined,
+    language: asLang(raw.language),
   };
 }
 

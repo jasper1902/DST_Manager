@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { BotApp } from "../app.js";
 import { type AppConfig, missingRequired, saveConfig } from "../config.js";
 import { setConfig, showConfig, whitelistedKeys } from "../dst/clusterConfig.js";
+import { asLang, makeT } from "../i18n.js";
 
 /**
  * Web server — entry point หลัก (รันตลอด) ครอบ BotApp
@@ -23,19 +24,19 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
-function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+function readBody(req: IncomingMessage, t: ReturnType<typeof makeT>): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     let data = "";
     req.on("data", (c: Buffer) => {
       data += c.toString("utf8");
-      if (data.length > 1_000_000) reject(new Error("body ใหญ่เกินไป"));
+      if (data.length > 1_000_000) reject(new Error(t("err_body_too_large")));
     });
     req.on("end", () => {
       if (data.trim() === "") return resolve({});
       try {
         resolve(JSON.parse(data) as Record<string, unknown>);
       } catch {
-        reject(new Error("JSON ไม่ถูกต้อง"));
+        reject(new Error(t("err_bad_json")));
       }
     });
     req.on("error", reject);
@@ -69,6 +70,7 @@ function setupView(c: AppConfig): unknown {
     autoRestart: c.autoRestart,
     dailyRestartTime: c.dailyRestartTime ?? "",
     logBufferSize: c.logBufferSize,
+    language: c.language,
   };
 }
 
@@ -137,6 +139,7 @@ function applySetup(cur: AppConfig, body: Record<string, unknown>): AppConfig {
     logBufferSize: n(body.logBufferSize, cur.logBufferSize),
     autoRestart: b(body.autoRestart, cur.autoRestart),
     dailyRestartTime: s(body.dailyRestartTime) || undefined,
+    language: body.language === undefined ? cur.language : asLang(body.language),
   };
 }
 
@@ -160,6 +163,16 @@ async function clusterConfigView(c: AppConfig): Promise<unknown> {
 
 async function handleApi(app: BotApp, req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
   const config = app.config;
+  const t = makeT(config.language);
+
+  // เปลี่ยนภาษา (จาก selector บน web UI) — persist ลง config.json ทันที, ได้ทั้งตอน bot รัน/หยุด
+  if (req.method === "POST" && path === "/api/lang") {
+    const body = await readBody(req, t);
+    const language = asLang(body.language);
+    saveConfig({ ...config, language });
+    app.setConfig({ ...config, language });
+    return json(res, 200, { ok: true, language });
+  }
 
   if (req.method === "GET" && path === "/api/bot/state") {
     return json(res, 200, { state: app.state, missing: missingRequired(config), error: app.error });
@@ -190,13 +203,13 @@ async function handleApi(app: BotApp, req: IncomingMessage, res: ServerResponse,
     return json(res, 200, setupView(config));
   }
   if (req.method === "POST" && path === "/api/setup") {
-    const next = applySetup(config, await readBody(req));
+    const next = applySetup(config, await readBody(req, t));
     saveConfig(next);
     app.setConfig(next);
     return json(res, 200, {
       ok: true,
       missing: missingRequired(next),
-      note: app.state === "running" ? "บันทึกแล้ว — กด restart bot เพื่อใช้ค่าใหม่" : "บันทึกแล้ว",
+      note: app.state === "running" ? t("setup_saved_restart") : t("setup_saved"),
     });
   }
 
@@ -208,13 +221,13 @@ async function handleApi(app: BotApp, req: IncomingMessage, res: ServerResponse,
     });
   }
   if (req.method === "POST" && path === "/api/config") {
-    const body = await readBody(req);
+    const body = await readBody(req, t);
     if (typeof body.key !== "string" || typeof body.value !== "string") {
-      return json(res, 400, { error: "ต้องมี key และ value เป็น string" });
+      return json(res, 400, { error: t("err_key_value_string") });
     }
     const r = await setConfig(config.dst, body.key, body.value);
     const sensitive = r.key === "cluster_password";
-    return json(res, 200, { ok: true, key: r.key, value: sensitive ? "•••" : r.value, note: "มีผลตอน restart server" });
+    return json(res, 200, { ok: true, key: r.key, value: sensitive ? "•••" : r.value, note: t("effect_on_restart") });
   }
 
   const manager = app.manager;
@@ -235,29 +248,29 @@ async function handleApi(app: BotApp, req: IncomingMessage, res: ServerResponse,
     return json(res, 200, { available: true, mods });
   }
   if (req.method === "POST" && path === "/api/control") {
-    if (!manager) return json(res, 409, { error: "บอทยังไม่ได้รัน" });
-    const body = await readBody(req);
+    if (!manager) return json(res, 409, { error: t("bot_not_running") });
+    const body = await readBody(req, t);
     const action = String(body.action);
     switch (action) {
       case "start":
         await manager.start();
-        return json(res, 200, { ok: true, message: "สั่ง start แล้ว" });
+        return json(res, 200, { ok: true, message: t("ctrl_start") });
       case "stop":
         await manager.stop();
-        return json(res, 200, { ok: true, message: "ปิด DST server แล้ว" });
+        return json(res, 200, { ok: true, message: t("ctrl_stop") });
       case "restart":
         await manager.restart();
-        return json(res, 200, { ok: true, message: "รีสตาร์ท DST แล้ว" });
+        return json(res, 200, { ok: true, message: t("ctrl_restart") });
       case "save": {
         const c = manager.save();
-        return json(res, 200, { ok: c > 0, message: c ? `save แล้ว (${c} shard)` : "ไม่มี shard รัน" });
+        return json(res, 200, { ok: c > 0, message: c ? t("ctrl_save", c) : t("ctrl_no_shard") });
       }
       case "backup": {
         const info = await manager.backup();
-        return json(res, 200, { ok: true, message: `backup: ${info.file}` });
+        return json(res, 200, { ok: true, message: t("ctrl_backup", info.file) });
       }
       default:
-        return json(res, 400, { error: `action ไม่รองรับ: ${action}` });
+        return json(res, 400, { error: t("unsupported_action", action) });
     }
   }
 
