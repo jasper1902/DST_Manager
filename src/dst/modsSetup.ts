@@ -1,7 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { cp, rm } from "node:fs/promises";
+import { basename, join } from "node:path";
 import type { DSTConfig } from "../config.js";
-import { parseModOverrides } from "./mods.js";
+import { extractArchive } from "./archive.js";
+import { fetchWorkshopFileUrls, parseModOverrides } from "./mods.js";
 import { installedModDir, modOverridesPath, modsDir, modsSetupPath } from "./paths.js";
 import { workshopItemDir } from "./steamcmd.js";
 
@@ -89,4 +91,111 @@ export async function copyDownloadedMods(
     copied.push(id);
   }
   return { copied, missing };
+}
+
+// ── legacy mods: ไฟล์มาเป็นก้อน *_legacy.bin (จริง ๆ คือ zip) ไม่ถูกแตก ──
+
+/** ม็อดมี modinfo.lua (= ใช้งานได้/resolve ชื่อได้) ไหม */
+function modExtracted(dst: DSTConfig, id: string): boolean {
+  return existsSync(join(installedModDir(dst, id), "modinfo.lua"));
+}
+
+/** หา *_legacy.bin ในโฟลเดอร์ (คือ zip ที่ยังไม่แตก) */
+function findLegacyBin(dir: string): string | null {
+  if (!existsSync(dir)) return null;
+  const f = readdirSync(dir).find((n) => /_legacy\.bin$/i.test(n));
+  return f ? join(dir, f) : null;
+}
+
+/** copy ไฟล์ zip (.bin ก็ได้) ลงเป็น .zip ชั่วคราวใน destDir แล้วแตก (extractArchive ดูจากนามสกุล) */
+async function unzipInto(zip: string, destDir: string): Promise<void> {
+  mkdirSync(destDir, { recursive: true });
+  const tmp = join(destDir, "__legacy_tmp.zip");
+  copyFileSync(zip, tmp);
+  try {
+    await extractArchive(tmp, destDir);
+  } finally {
+    try {
+      rmSync(tmp, { force: true });
+    } catch {
+      // ignore
+    }
+  }
+}
+
+export interface ModFixResult {
+  fixed: string[];
+  stillMissing: string[];
+}
+
+/**
+ * ซ่อมม็อดที่ "ไม่มี modinfo.lua" (legacy/ไฟล์ไม่ครบ → server โชว์ workshop-id + ใช้ไม่ได้) แบบ hybrid:
+ *  1) ถ้ามี *_legacy.bin (ใน mods/workshop-<id> หรือ workshop content) → unzip (มันคือ zip)
+ *  2) ไม่งั้น → ดึง file_url จาก Steam (เฉพาะ legacy item มี) → โหลด zip → unzip
+ * ลบ *_legacy.bin ทิ้งหลังแตกสำเร็จ
+ */
+export async function ensureModFilesExtracted(
+  dst: DSTConfig,
+  ids: string[],
+  onLine: (line: string) => void,
+): Promise<ModFixResult> {
+  const missing = ids.filter((id) => !modExtracted(dst, id));
+  const fixed: string[] = [];
+  const stillMissing: string[] = [];
+  if (missing.length === 0) return { fixed, stillMissing };
+
+  onLine(`fixing ${missing.length} mod(s) without extracted files (legacy)...`);
+  const urls = await fetchWorkshopFileUrls(missing); // best-effort (legacy item เท่านั้นที่มี)
+
+  for (const id of missing) {
+    const dir = installedModDir(dst, id);
+    try {
+      // 1) unzip *_legacy.bin ที่มีอยู่ (เร็ว/ออฟไลน์)
+      const bin = findLegacyBin(dir) ?? findLegacyBin(workshopItemDir(id));
+      if (bin) {
+        onLine(`mod ${id}: unzip ${basename(bin)}`);
+        await unzipInto(bin, dir);
+      }
+      // 2) ถ้ายังไม่มี modinfo → โหลดจาก file_url แล้วแตก
+      if (!modExtracted(dst, id)) {
+        const url = urls.get(id);
+        if (url) {
+          onLine(`mod ${id}: downloading from Steam file_url`);
+          const res = await fetch(url);
+          if (res.ok) {
+            mkdirSync(dir, { recursive: true });
+            const tmp = join(dir, "__dl.zip");
+            writeFileSync(tmp, Buffer.from(await res.arrayBuffer()));
+            try {
+              await extractArchive(tmp, dir);
+            } finally {
+              try {
+                rmSync(tmp, { force: true });
+              } catch {
+                // ignore
+              }
+            }
+          }
+        }
+      }
+
+      if (modExtracted(dst, id)) {
+        fixed.push(id);
+        const leftover = findLegacyBin(dir);
+        if (leftover) {
+          try {
+            rmSync(leftover, { force: true });
+          } catch {
+            // ignore
+          }
+        }
+      } else {
+        stillMissing.push(id);
+      }
+    } catch (e) {
+      onLine(`mod ${id}: fix failed — ${e instanceof Error ? e.message : String(e)}`);
+      stillMissing.push(id);
+    }
+  }
+  return { fixed, stillMissing };
 }

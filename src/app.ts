@@ -9,7 +9,7 @@ import { registerCommands } from "./discord/register.js";
 import { createBackup, restoreBackup } from "./dst/backup.js";
 import { importCluster, type ImportOptions, type ImportResult, type ImportSource } from "./dst/importer.js";
 import { DSTManager, type ManagerCrashEvent } from "./dst/manager.js";
-import { copyDownloadedMods, downloadedWorkshopIds, syncModsSetup } from "./dst/modsSetup.js";
+import { copyDownloadedMods, downloadedWorkshopIds, ensureModFilesExtracted, syncModsSetup } from "./dst/modsSetup.js";
 import { appBaseDir, clusterDir, serverInstalled } from "./dst/paths.js";
 import { createRestartScheduler, type RestartScheduler } from "./dst/scheduler.js";
 import { downloadServer, downloadWorkshopItems, hasSteamcmd } from "./dst/steamcmd.js";
@@ -331,11 +331,18 @@ export class BotApp {
         this.modJob.phase = "copying";
         this.modJob.progress = null;
         const res = await copyDownloadedMods(dst, ids);
-        this.modJob.summary = { registered: ids.length, copied: res.copied, missing: res.missing };
+        // 4) ซ่อม legacy mods ที่มาเป็น *_legacy.bin (unzip / โหลด file_url)
+        this.modJob.phase = "fixing";
+        const fix = await ensureModFilesExtracted(dst, ids, log);
+        this.modJob.summary = { registered: ids.length, copied: res.copied, missing: fix.stillMissing };
         this.modJob.done = true;
         this.modJob.progress = 100;
         this.modJob.phase = null;
-        log(`✓ installed ${res.copied.length}/${total} mod(s)` + (res.missing.length ? `, failed: ${res.missing.join(", ")}` : ""));
+        log(
+          `✓ installed ${res.copied.length}/${total} mod(s)` +
+            (fix.fixed.length ? `, legacy fixed: ${fix.fixed.length}` : "") +
+            (fix.stillMissing.length ? `, still missing: ${fix.stillMissing.join(", ")}` : ""),
+        );
       } catch (err: unknown) {
         this.modJob.error = err instanceof Error ? err.message : String(err);
         log(`✗ ${this.modJob.error}`);
