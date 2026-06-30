@@ -296,6 +296,15 @@ async function handleApi(app: BotApp, req: IncomingMessage, res: ServerResponse,
     return json(res, 200, { ok: true, hasToken: true, note: t("token_saved") });
   }
 
+  // ── ติดตั้ง/ดาวน์โหลดม็อดของ cluster ปัจจุบัน ──
+  if (req.method === "GET" && path === "/api/mods/provision/status") {
+    return json(res, 200, app.modStatus());
+  }
+  if (req.method === "POST" && path === "/api/mods/provision") {
+    app.provisionMods(); // background — poll /api/mods/provision/status
+    return json(res, 200, { ok: true });
+  }
+
   if (req.method === "GET" && path === "/api/setup") {
     return json(res, 200, setupView(config));
   }

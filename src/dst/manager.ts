@@ -4,6 +4,7 @@ import { makeT, type T } from "../i18n.js";
 import { type BackupInfo, createBackup, listBackups, restoreBackup } from "./backup.js";
 import { ensureClusterFiles } from "./clusterScaffold.js";
 import { hasClusterToken } from "./clusterToken.js";
+import { syncModsSetup } from "./modsSetup.js";
 import { console_ } from "./console.js";
 import { parsePlayerRow, parseWorldInfo, type WorldInfo } from "./logParser.js";
 import { getModList, type ModEntry } from "./mods.js";
@@ -171,6 +172,17 @@ export class DSTManager extends EventEmitter {
     const created = ensureClusterFiles(this.dst, this.shardNames);
     for (const f of created) {
       this.emit("line", { shard: "manager", line: `created default ${f}` } satisfies ManagerLineEvent);
+    }
+    // sync dedicated_server_mods_setup.lua จาก modoverrides.lua → engine โหลด/ใช้ม็อดผ่าน UGC ตอน boot
+    try {
+      const mods = syncModsSetup(this.dst, this.shardNames);
+      if (mods.manual) {
+        this.emit("line", { shard: "manager", line: "dedicated_server_mods_setup.lua is hand-written — left as-is" } satisfies ManagerLineEvent);
+      } else if (mods.ids.length > 0) {
+        this.emit("line", { shard: "manager", line: `registered ${mods.ids.length} mod(s) in dedicated_server_mods_setup.lua` } satisfies ManagerLineEvent);
+      }
+    } catch {
+      // sync ม็อดล้มเหลวไม่ควรบล็อกการ start
     }
     const order = this.activeShards();
     for (let i = 0; i < order.length; i++) {

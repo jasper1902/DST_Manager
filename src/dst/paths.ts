@@ -76,6 +76,21 @@ export function modOverridesPath(dst: DSTConfig, shard: string): string {
   return join(shardDir(dst, shard), "modoverrides.lua");
 }
 
+/** โฟลเดอร์ mods ของ server install (<install>/mods) */
+export function modsDir(dst: DSTConfig): string {
+  return join(dst.installDir, "mods");
+}
+
+/** dedicated_server_mods_setup.lua — รายการ ServerModSetup ให้ engine โหลด workshop mods ตอน boot */
+export function modsSetupPath(dst: DSTConfig): string {
+  return join(modsDir(dst), "dedicated_server_mods_setup.lua");
+}
+
+/** โฟลเดอร์ม็อดที่ติดตั้งในรูปแบบ local: <install>/mods/workshop-<id> */
+export function installedModDir(dst: DSTConfig, id: string): string {
+  return join(modsDir(dst), `workshop-${id}`);
+}
+
 /**
  * args สำหรับ launch shard หนึ่งตัว
  * -console เปิด stdin Lua console, persistent root + conf dir ชี้ที่เก็บ cluster

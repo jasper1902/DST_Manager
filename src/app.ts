@@ -9,9 +9,10 @@ import { registerCommands } from "./discord/register.js";
 import { createBackup, restoreBackup } from "./dst/backup.js";
 import { importCluster, type ImportOptions, type ImportResult, type ImportSource } from "./dst/importer.js";
 import { DSTManager, type ManagerCrashEvent } from "./dst/manager.js";
+import { copyDownloadedMods, downloadedWorkshopIds, syncModsSetup } from "./dst/modsSetup.js";
 import { appBaseDir, clusterDir, serverInstalled } from "./dst/paths.js";
 import { createRestartScheduler, type RestartScheduler } from "./dst/scheduler.js";
-import { downloadServer, hasSteamcmd } from "./dst/steamcmd.js";
+import { downloadServer, downloadWorkshopItems, hasSteamcmd } from "./dst/steamcmd.js";
 
 export type BotState = "stopped" | "starting" | "running" | "stopping";
 
@@ -59,6 +60,24 @@ export interface ImportJobStatus {
   summary: ImportResult | null;
 }
 
+/** ผลการติดตั้งม็อด: registered = จำนวนที่ลงทะเบียน, copied/missing = id */
+export interface ModProvisionResult {
+  registered: number;
+  copied: string[];
+  missing: string[];
+}
+
+/** สถานะการติดตั้ง/ดาวน์โหลดม็อด (snapshot ให้ web poll) */
+export interface ModJobStatus {
+  running: boolean;
+  done: boolean;
+  error: string | null;
+  log: string[];
+  progress: number | null;
+  phase: string | null;
+  summary: ModProvisionResult | null;
+}
+
 /**
  * คุม lifecycle ของบอท (manager + Discord client + scheduler) แบบ start/stop ได้ตามสั่ง
  *
@@ -88,6 +107,15 @@ export class BotApp {
     progress: null as number | null,
     phase: null as string | null,
     summary: null as ImportResult | null,
+  };
+  private modJob = {
+    running: false,
+    done: false,
+    error: null as string | null,
+    log: [] as string[],
+    progress: null as number | null,
+    phase: null as string | null,
+    summary: null as ModProvisionResult | null,
   };
 
   constructor(config: AppConfig) {
@@ -241,6 +269,78 @@ export class BotApp {
           }
         }
         this.importJob.running = false;
+      }
+    })();
+  }
+
+  /** snapshot สถานะการติดตั้งม็อด (ให้ web poll) */
+  modStatus(): ModJobStatus {
+    return {
+      running: this.modJob.running,
+      done: this.modJob.done,
+      error: this.modJob.error,
+      log: this.modJob.log,
+      progress: this.modJob.progress,
+      phase: this.modJob.phase,
+      summary: this.modJob.summary,
+    };
+  }
+
+  /**
+   * ติดตั้งม็อดของ cluster ปัจจุบัน (background) — ต้องให้บอทหยุดก่อน
+   * register (เขียน dedicated_server_mods_setup.lua) → โหลดผ่าน SteamCMD → copy เป็น mods/workshop-<id>
+   */
+  provisionMods(): void {
+    if (this._state !== "stopped") throw new Error("ต้องหยุดบอทก่อนถึงจะติดตั้งม็อดได้");
+    if (this.modJob.running) throw new Error("กำลังติดตั้งม็อดอยู่แล้ว");
+
+    this.modJob = { running: true, done: false, error: null, log: [], progress: null, phase: null, summary: null };
+    const dst = this._config.dst;
+    const log = (line: string): void => {
+      this.modJob.log.push(line);
+      if (this.modJob.log.length > INSTALL_LOG_MAX) this.modJob.log.shift();
+    };
+
+    void (async () => {
+      try {
+        // 1) register: sync dedicated_server_mods_setup.lua จาก modoverrides.lua
+        this.modJob.phase = "register";
+        const sync = syncModsSetup(dst, ["Master", "Caves"]);
+        if (sync.manual) log("dedicated_server_mods_setup.lua is hand-written — left as-is");
+        const ids = sync.ids;
+        log(`registered ${ids.length} mod(s)`);
+        if (ids.length === 0) {
+          this.modJob.summary = { registered: 0, copied: [], missing: [] };
+          this.modJob.done = true;
+          return;
+        }
+
+        // 2) download ผ่าน SteamCMD — poll นับโฟลเดอร์ที่โหลดเสร็จเพื่อโชว์ progress
+        this.modJob.phase = "downloading";
+        const total = ids.length;
+        const poll = setInterval(() => {
+          this.modJob.progress = (downloadedWorkshopIds(ids).length / total) * 100;
+        }, 3000);
+        try {
+          await downloadWorkshopItems(ids, log);
+        } finally {
+          clearInterval(poll);
+        }
+
+        // 3) copy → mods/workshop-<id>
+        this.modJob.phase = "copying";
+        this.modJob.progress = null;
+        const res = await copyDownloadedMods(dst, ids);
+        this.modJob.summary = { registered: ids.length, copied: res.copied, missing: res.missing };
+        this.modJob.done = true;
+        this.modJob.progress = 100;
+        this.modJob.phase = null;
+        log(`✓ installed ${res.copied.length}/${total} mod(s)` + (res.missing.length ? `, failed: ${res.missing.join(", ")}` : ""));
+      } catch (err: unknown) {
+        this.modJob.error = err instanceof Error ? err.message : String(err);
+        log(`✗ ${this.modJob.error}`);
+      } finally {
+        this.modJob.running = false;
       }
     })();
   }

@@ -105,28 +105,22 @@ export async function ensureSteamCmd(onLine: OnLine): Promise<void> {
 
 /** จำนวนครั้งสูงสุดที่ลองรัน SteamCMD (รันแรกมักอัปเดตตัวเอง+exit 7 → ต้องรันซ้ำ) */
 const MAX_STEAMCMD_ATTEMPTS = 3;
+/** app id ของ "Don't Starve Together" (client) — workshop mod อยู่ใต้ app นี้ ไม่ใช่ 343050 */
+const DST_WORKSHOP_APP_ID = "322330";
+
+/** โฟลเดอร์ที่ SteamCMD วาง workshop item ที่โหลดมา: <steamcmd>/steamapps/workshop/content/322330/<id> */
+export function workshopItemDir(id: string): string {
+  return join(steamcmdDir(), "steamapps", "workshop", "content", DST_WORKSHOP_APP_ID, id);
+}
 
 /**
- * รัน SteamCMD ติดตั้ง/อัปเดตตัว server เข้า dst.installDir — คืน exit code
- * force_install_dir ต้องมาก่อน login (ข้อจำกัดของ SteamCMD); validate = ตรวจไฟล์ครบ
+ * spawn SteamCMD ด้วย args ที่ให้ → stream output แล้วคืน exit code
+ * SteamCMD อัปเดต progress สดด้วย \r (เขียนทับบรรทัดเดิม) → ตัด \r เป็นเส้นแบ่งบรรทัดด้วย
+ * + buffer ส่วนท้ายที่ยังไม่จบบรรทัดไว้รอบหน้า กัน parse ครึ่งบรรทัด
  */
-function runSteamcmdInstall(dst: DSTConfig, onLine: OnLine): Promise<number> {
-  const args = [
-    "+force_install_dir",
-    dst.installDir,
-    "+login",
-    "anonymous",
-    "+app_update",
-    DST_APP_ID,
-    "validate",
-    "+quit",
-  ];
+function runSteamcmd(args: string[], onLine: OnLine): Promise<number> {
   return new Promise((resolve, reject) => {
-    onLine(`เริ่มติดตั้ง DST server (app ${DST_APP_ID}) → ${dst.installDir}`);
     const child = spawn(steamcmdExe(), args, { windowsHide: true, cwd: steamcmdDir() });
-    // SteamCMD อัปเดต progress สดด้วย \r (เขียนทับบรรทัดเดิม ไม่ใช่ \n) → ต้องตัด \r เป็นเส้นแบ่ง
-    // บรรทัดด้วย ไม่งั้นทั้ง phase จะมาเป็นก้อนเดียวตอนจบ (progress ไม่ขยับระหว่างทาง)
-    // buffer ส่วนท้ายที่ยังไม่จบบรรทัดไว้รอบหน้า กัน parse ครึ่งบรรทัด
     let buf = "";
     const onChunk = (c: Buffer): void => {
       buf += c.toString("utf8");
@@ -146,25 +140,52 @@ function runSteamcmdInstall(dst: DSTConfig, onLine: OnLine): Promise<number> {
   });
 }
 
-/**
- * ดาวน์โหลด SteamCMD (ถ้ายังไม่มี) แล้วติดตั้ง/อัปเดต DST server
- *
- * SteamCMD รันครั้งแรกจะอัปเดตตัวเองก่อน → app_update ล้ม ("Missing configuration")
- * แล้ว process จบด้วย exit code 7 (self-update + restart) — เป็นปกติ ต้องรันซ้ำ
- * รอบถัด ๆ ไป client พร้อมแล้วจะดาวน์โหลด server จริง (เห็น progress) แล้วจบ exit 0
- */
-export async function downloadServer(dst: DSTConfig, onLine: OnLine): Promise<void> {
-  await ensureSteamCmd(onLine);
+/** รัน SteamCMD พร้อม retry on exit 7 (รันแรก self-update + restart เป็นปกติ); throw ถ้าไม่ใช่ 0/7 */
+async function runSteamcmdWithRetry(args: string[], onLine: OnLine, label: string): Promise<void> {
   for (let attempt = 1; attempt <= MAX_STEAMCMD_ATTEMPTS; attempt++) {
-    const code = await runSteamcmdInstall(dst, onLine);
-    if (code === 0) {
-      onLine("✓ DST server พร้อมใช้งานแล้ว");
-      return;
-    }
+    const code = await runSteamcmd(args, onLine);
+    if (code === 0) return;
     if (code === 7 && attempt < MAX_STEAMCMD_ATTEMPTS) {
       onLine(`SteamCMD อัปเดตตัวเอง/รีสตาร์ท (exit 7) — กำลังลองใหม่ครั้งที่ ${attempt + 1}...`);
       continue;
     }
-    throw new Error(`SteamCMD จบด้วย exit code ${code} — ตรวจ log ด้านบน`);
+    throw new Error(`SteamCMD (${label}) จบด้วย exit code ${code} — ตรวจ log ด้านบน`);
+  }
+}
+
+/**
+ * ดาวน์โหลด SteamCMD (ถ้ายังไม่มี) แล้วติดตั้ง/อัปเดต DST server
+ * force_install_dir ต้องมาก่อน login (ข้อจำกัดของ SteamCMD); validate = ตรวจไฟล์ครบ
+ */
+export async function downloadServer(dst: DSTConfig, onLine: OnLine): Promise<void> {
+  await ensureSteamCmd(onLine);
+  const args = ["+force_install_dir", dst.installDir, "+login", "anonymous", "+app_update", DST_APP_ID, "validate", "+quit"];
+  onLine(`เริ่มติดตั้ง DST server (app ${DST_APP_ID}) → ${dst.installDir}`);
+  await runSteamcmdWithRetry(args, onLine, "app_update");
+  onLine("✓ DST server พร้อมใช้งานแล้ว");
+}
+
+/**
+ * โหลด workshop mods (app 322330) ลง <steamcmd>/steamapps/workshop/content/322330/<id>
+ * ใช้ login anonymous (mod DST เป็น public) — โหลดทุก id ในรอบเดียว
+ * ความสำเร็จราย id ให้ caller ตรวจจาก workshopItemDir(id) หลังจบ (บาง id อาจ private/ถูกลบ)
+ * ไม่ throw บน exit != 0 (อาจโหลดบางตัวสำเร็จ) ยกเว้น 7 ที่ retry แล้วยังพัง
+ */
+export async function downloadWorkshopItems(ids: string[], onLine: OnLine): Promise<void> {
+  if (ids.length === 0) return;
+  await ensureSteamCmd(onLine);
+  const args = ["+login", "anonymous"];
+  for (const id of ids) args.push("+workshop_download_item", DST_WORKSHOP_APP_ID, id);
+  args.push("+quit");
+  onLine(`เริ่มโหลด workshop mods (${ids.length}): ${ids.join(", ")}`);
+  for (let attempt = 1; attempt <= MAX_STEAMCMD_ATTEMPTS; attempt++) {
+    const code = await runSteamcmd(args, onLine);
+    if (code === 0) return;
+    if (code === 7 && attempt < MAX_STEAMCMD_ATTEMPTS) {
+      onLine(`SteamCMD อัปเดตตัวเอง/รีสตาร์ท (exit 7) — กำลังลองใหม่ครั้งที่ ${attempt + 1}...`);
+      continue;
+    }
+    onLine(`⚠️ SteamCMD จบด้วย exit code ${code} — บาง mod อาจโหลดไม่สำเร็จ (ระบบจะตรวจรายตัว)`);
+    return;
   }
 }

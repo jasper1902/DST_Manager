@@ -233,6 +233,16 @@ export const PAGE = `<!doctype html>
     <div class="card">
       <h2><span data-i18n="sec_mods">🧩 Mods in use</span> <span class="muted normal-case tracking-normal font-normal" data-i18n="sec_mods_note">(from modoverrides.lua)</span></h2>
       <div id="mods" class="text-slate-400 text-sm">—</div>
+      <div class="muted mt-3" data-i18n="mods_provision_note">Register & download this world's mods via SteamCMD into mods/workshop-&lt;id&gt; (bot must be stopped).</div>
+      <div id="modsetupstate" class="warn"></div>
+      <div class="controls mt-2">
+        <button id="btn-mods-setup" data-i18n="btn_mods_setup">🧩 Download / set up mods</button>
+      </div>
+      <div id="modbar-wrap" class="hidden mt-3">
+        <div class="flex justify-between text-xs text-slate-400 mb-1"><span data-i18n="mods_progress">Mod download progress</span><span id="modbar-pct" class="tabular-nums">0%</span></div>
+        <div class="w-full h-2.5 bg-slate-800 rounded-full overflow-hidden"><div id="modbar" class="h-full bg-emerald-500 transition-all duration-300 ease-out" style="width:0%"></div></div>
+      </div>
+      <pre id="modlog" class="hidden mt-3 max-h-64"></pre>
     </div>
   </section>
 </main>
@@ -276,6 +286,10 @@ export const PAGE = `<!doctype html>
       imp_no_file: 'Choose an archive file first', imp_uploading: '⏳ Uploading...', imp_importing: '⏳ Importing...',
       imp_done: '✓ Import complete', imp_failed: '✗ Import failed: ', import_need_stop: '⚠️ Stop the bot to enable import',
       sec_status: '📊 Server status', sec_mods: '🧩 Mods in use', sec_mods_note: '(from modoverrides.lua)',
+      mods_provision_note: "Register & download this world's mods via SteamCMD into mods/workshop-<id> (bot must be stopped).",
+      btn_mods_setup: '🧩 Download / set up mods', mods_progress: 'Mod download progress',
+      mods_need_stop: '⚠️ Stop the bot to set up mods', mods_confirm: "Download this world's mods via SteamCMD? (registers from modoverrides.lua, may take a while)",
+      mods_provisioning: '⏳ Setting up mods...', mods_done: '✓ Mods set up', mods_failed: '✗ Mod setup failed: ',
       sec_cluster: '📝 cluster.ini', sec_cluster_note: '(takes effect on DST restart)',
       status_label: 'Status:', btn_run: '▶️ Run bot', btn_stop: '⏹️ Stop', btn_rebot: '🔄 restart',
       btn_save_config: '💾 Save config', btn_install: '⬇️ Download/update DST server',
@@ -342,6 +356,10 @@ export const PAGE = `<!doctype html>
       imp_no_file: 'เลือกไฟล์ archive ก่อน', imp_uploading: '⏳ กำลังอัปโหลด...', imp_importing: '⏳ กำลัง import...',
       imp_done: '✓ import เสร็จแล้ว', imp_failed: '✗ import ไม่สำเร็จ: ', import_need_stop: '⚠️ หยุดบอทเพื่อเปิดให้ import',
       sec_status: '📊 สถานะ server', sec_mods: '🧩 ม็อดที่ใช้', sec_mods_note: '(จาก modoverrides.lua)',
+      mods_provision_note: 'ลงทะเบียน & ดาวน์โหลดม็อดของโลกนี้ผ่าน SteamCMD ไปไว้ที่ mods/workshop-<id> (ต้องหยุดบอทก่อน)',
+      btn_mods_setup: '🧩 ดาวน์โหลด / ติดตั้งม็อด', mods_progress: 'ความคืบหน้าโหลดม็อด',
+      mods_need_stop: '⚠️ หยุดบอทก่อนถึงจะติดตั้งม็อดได้', mods_confirm: 'ดาวน์โหลดม็อดของโลกนี้ผ่าน SteamCMD? (อ่านจาก modoverrides.lua อาจใช้เวลาสักครู่)',
+      mods_provisioning: '⏳ กำลังติดตั้งม็อด...', mods_done: '✓ ติดตั้งม็อดเสร็จ', mods_failed: '✗ ติดตั้งม็อดไม่สำเร็จ: ',
       sec_cluster: '📝 cluster.ini', sec_cluster_note: '(มีผลตอน restart DST)',
       status_label: 'สถานะ:', btn_run: '▶️ รันบอท', btn_stop: '⏹️ หยุด', btn_rebot: '🔄 restart',
       btn_save_config: '💾 บันทึก config', btn_install: '⬇️ ดาวน์โหลด/อัปเดต DST server',
@@ -421,6 +439,7 @@ export const PAGE = `<!doctype html>
   var startIntent = false;
   var srvPolling = false;
   var impPolling = false;
+  var modPolling = false;
 
   var SETUP = [
     { title:'Discord', fields:[
@@ -540,6 +559,8 @@ export const PAGE = `<!doctype html>
       if(el('missing')) el('missing').textContent = LAST_MISSING.length ? (t('still_incomplete') + LAST_MISSING.join(', ')) : '';
       var ib = el('btn-import'); if(ib) ib.disabled = (d.state!=='stopped') || impPolling;
       var ist = el('importstate'); if(ist) ist.textContent = (d.state!=='stopped') ? t('import_need_stop') : '';
+      var mb = el('btn-mods-setup'); if(mb) mb.disabled = (d.state!=='stopped') || modPolling;
+      var mss = el('modsetupstate'); if(mss) mss.textContent = (d.state!=='stopped') ? t('mods_need_stop') : '';
       if(d.error) showError(d.error); else clearError();
       // one-click start: บอทขึ้น running แล้วเริ่มเกมต่อให้อัตโนมัติ (best-effort ครั้งเดียว)
       if(startIntent && running){ startIntent = false; ctrlDst('start'); }
@@ -747,6 +768,42 @@ export const PAGE = `<!doctype html>
     }catch(e){ toast('✗ '+e.message); el('btn-import').disabled=false; loadState(); }
   }
 
+  // ── mods provisioning ──
+  function renderModProgress(d){
+    var wrap=el('modbar-wrap'),bar=el('modbar'),pct=el('modbar-pct');
+    if(!wrap) return;
+    var phase=d.phase?(d.phase+' '):'';
+    if(d.running){
+      wrap.classList.remove('hidden'); bar.classList.remove('bg-rose-500');
+      if(d.progress==null){ bar.classList.add('animate-pulse'); bar.style.width='100%'; pct.textContent=phase+'…'; }
+      else { bar.classList.remove('animate-pulse'); bar.style.width=d.progress.toFixed(0)+'%'; pct.textContent=phase+d.progress.toFixed(1)+'%'; }
+    } else if(d.error){ wrap.classList.remove('hidden'); bar.classList.remove('animate-pulse'); bar.classList.add('bg-rose-500'); pct.textContent='✗'; }
+    else if(d.done){ wrap.classList.remove('hidden'); bar.classList.remove('animate-pulse','bg-rose-500'); bar.style.width='100%'; pct.textContent='100%'; }
+    if(d.log && d.log.length){ var pre=el('modlog'); pre.classList.remove('hidden'); pre.textContent=d.log.join('\\n'); pre.scrollTop=pre.scrollHeight; }
+  }
+  async function pollMods(){
+    if(modPolling) return;
+    modPolling=true;
+    var tick=async function(){
+      var d; try{ d=await api('/api/mods/provision/status'); }catch(e){ d=null; }
+      if(d){
+        renderModProgress(d);
+        if(d.running){ setTimeout(tick,1000); return; }
+        if(d.error) toast(t('mods_failed')+d.error); else if(d.done) toast(t('mods_done'));
+      }
+      modPolling=false;
+      loadState(); loadMods();
+    };
+    tick();
+  }
+  async function doProvisionMods(){
+    if(BOT_STATE!=='stopped'){ toast(t('mods_need_stop')); return; }
+    if(!confirm(t('mods_confirm'))) return;
+    el('btn-mods-setup').disabled=true;
+    try{ toast(t('mods_provisioning')); await api('/api/mods/provision','POST'); pollMods(); }
+    catch(e){ toast('✗ '+e.message); loadState(); }
+  }
+
   // ── DST control + bot lifecycle ──
   async function ctrlDst(action){
     if((action==='stop'||action==='restart')&&!confirm(t('confirm_action')+action+' ?')) return;
@@ -832,6 +889,7 @@ export const PAGE = `<!doctype html>
   el('btn-save-adv').addEventListener('click', saveSetup);
   el('btn-token-save').addEventListener('click', saveToken);
   el('btn-import').addEventListener('click', doImport);
+  el('btn-mods-setup').addEventListener('click', doProvisionMods);
   el('btn-gohome').addEventListener('click', function(){ showTab('home'); startServer(); });
   el('imp-kind').addEventListener('change', syncImportUI);
   el('imp-mode').addEventListener('change', syncImportUI);
