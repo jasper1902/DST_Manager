@@ -1,9 +1,51 @@
+import { randomUUID } from "node:crypto";
+import { createWriteStream, existsSync, mkdirSync, rmSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { basename, join } from "node:path";
 import type { BotApp } from "../app.js";
 import { type AppConfig, missingRequired, saveConfig } from "../config.js";
+import { archiveKind } from "../dst/archive.js";
 import { setConfig, showConfig, whitelistedKeys } from "../dst/clusterConfig.js";
 import { hasClusterToken, readClusterToken, writeClusterToken } from "../dst/clusterToken.js";
+import { appBaseDir } from "../dst/paths.js";
 import { asLang, makeT } from "../i18n.js";
+import type { ImportSource } from "../dst/importer.js";
+
+/** เพดานขนาดไฟล์ที่อัปโหลด import (world อาจใหญ่ แต่กัน disk เต็มจากไฟล์เดียว) */
+const MAX_UPLOAD_BYTES = 8 * 1024 * 1024 * 1024; // 8 GB
+
+function uploadsDir(): string {
+  return join(appBaseDir(), "imports", "uploads");
+}
+
+/** stream request body ลงไฟล์โดยตรง (เลี่ยง buffer ใน memory) + cap ขนาด */
+function streamToFile(req: IncomingMessage, dest: string, maxBytes: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const ws = createWriteStream(dest);
+    let total = 0;
+    let aborted = false;
+    req.on("data", (c: Buffer) => {
+      total += c.length;
+      if (total > maxBytes && !aborted) {
+        aborted = true;
+        ws.destroy();
+        req.destroy();
+        try {
+          rmSync(dest, { force: true });
+        } catch {
+          // ignore
+        }
+        reject(new Error("upload เกินขนาดที่อนุญาต"));
+      }
+    });
+    req.on("error", reject);
+    ws.on("error", reject);
+    ws.on("finish", () => {
+      if (!aborted) resolve();
+    });
+    req.pipe(ws);
+  });
+}
 
 /**
  * Web server — entry point หลัก (รันตลอด) ครอบ BotApp
@@ -197,6 +239,43 @@ async function handleApi(app: BotApp, req: IncomingMessage, res: ServerResponse,
   }
   if (req.method === "POST" && path === "/api/server/install") {
     app.installServer(); // เริ่ม background — poll /api/server/status ดู progress
+    return json(res, 200, { ok: true });
+  }
+
+  // ── import world ──
+  if (req.method === "GET" && path === "/api/import/status") {
+    return json(res, 200, app.importStatus());
+  }
+  if (req.method === "POST" && path === "/api/import/upload") {
+    // ชื่อไฟล์ (เพื่อรู้สกุล .zip/.tar.gz) ส่งมาทาง header
+    const name = String(req.headers["x-import-filename"] ?? "");
+    if (!archiveKind(name)) {
+      return json(res, 400, { error: t("err_import_bad_archive") });
+    }
+    const ext = name.toLowerCase().endsWith(".zip") ? ".zip" : name.toLowerCase().endsWith(".tgz") ? ".tgz" : ".tar.gz";
+    mkdirSync(uploadsDir(), { recursive: true });
+    const uploadId = `${randomUUID()}${ext}`;
+    await streamToFile(req, join(uploadsDir(), uploadId), MAX_UPLOAD_BYTES);
+    return json(res, 200, { ok: true, uploadId });
+  }
+  if (req.method === "POST" && path === "/api/import") {
+    const body = await readBody(req, t);
+    const kind = body.kind === "folder" ? "folder" : "archive";
+    let source: ImportSource;
+    if (kind === "archive") {
+      const uploadId = s(body.uploadId);
+      if (uploadId === "" || basename(uploadId) !== uploadId) return json(res, 400, { error: t("err_import_bad_upload") });
+      const file = join(uploadsDir(), uploadId);
+      if (!existsSync(file)) return json(res, 404, { error: t("err_import_upload_missing") });
+      source = { kind: "archive", path: file };
+    } else {
+      const folder = s(body.path);
+      if (folder === "") return json(res, 400, { error: t("err_import_no_path") });
+      source = { kind: "folder", path: folder };
+    }
+    const mode = body.mode === "no-mods" ? "no-mods" : "full";
+    const regenerate = body.regenerate === true;
+    app.importWorld(source, { mode, regenerate }); // throws ถ้าบอทยังไม่หยุด/กำลัง import
     return json(res, 200, { ok: true });
   }
 

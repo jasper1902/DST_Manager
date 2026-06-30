@@ -1,10 +1,15 @@
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import type { Client } from "discord.js";
 import type { AppConfig } from "./config.js";
 import { missingRequired } from "./config.js";
 import { createBot } from "./discord/bot.js";
 import { registerCommands } from "./discord/register.js";
+import { createBackup, restoreBackup } from "./dst/backup.js";
+import { importCluster, type ImportOptions, type ImportResult, type ImportSource } from "./dst/importer.js";
 import { DSTManager, type ManagerCrashEvent } from "./dst/manager.js";
-import { serverInstalled } from "./dst/paths.js";
+import { appBaseDir, clusterDir, serverInstalled } from "./dst/paths.js";
 import { createRestartScheduler, type RestartScheduler } from "./dst/scheduler.js";
 import { downloadServer, hasSteamcmd } from "./dst/steamcmd.js";
 
@@ -43,6 +48,17 @@ function parseInstallProgress(line: string): { progress: number; phase: string }
   return { progress: Math.max(0, Math.min(100, p)), phase };
 }
 
+/** สถานะการ import world (snapshot ให้ web poll — โครงเดียวกับ InstallStatus) */
+export interface ImportJobStatus {
+  running: boolean;
+  done: boolean;
+  error: string | null;
+  log: string[];
+  progress: number | null;
+  phase: string | null;
+  summary: ImportResult | null;
+}
+
 /**
  * คุม lifecycle ของบอท (manager + Discord client + scheduler) แบบ start/stop ได้ตามสั่ง
  *
@@ -63,6 +79,15 @@ export class BotApp {
     log: [] as string[],
     progress: null as number | null,
     phase: null as string | null,
+  };
+  private importJob = {
+    running: false,
+    done: false,
+    error: null as string | null,
+    log: [] as string[],
+    progress: null as number | null,
+    phase: null as string | null,
+    summary: null as ImportResult | null,
   };
 
   constructor(config: AppConfig) {
@@ -134,6 +159,90 @@ export class BotApp {
       .finally(() => {
         this.install.running = false;
       });
+  }
+
+  /** snapshot สถานะการ import (ให้ web poll) */
+  importStatus(): ImportJobStatus {
+    return {
+      running: this.importJob.running,
+      done: this.importJob.done,
+      error: this.importJob.error,
+      log: this.importJob.log,
+      progress: this.importJob.progress,
+      phase: this.importJob.phase,
+      summary: this.importJob.summary,
+    };
+  }
+
+  /**
+   * import world เข้าทับ cluster ปัจจุบัน (background) — ต้องให้บอทหยุดก่อน (ไม่มี shard รัน)
+   * backup cluster ปัจจุบันก่อนเสมอ แล้ว rollback ให้ถ้า import พัง
+   */
+  importWorld(source: ImportSource, opts: ImportOptions): void {
+    if (this._state !== "stopped") throw new Error("ต้องหยุดบอทก่อนถึงจะ import world ได้");
+    if (this.importJob.running) throw new Error("กำลัง import อยู่แล้ว");
+    if (this._config.dst.cluster === "") throw new Error("ตั้งชื่อ cluster ก่อนถึงจะ import ได้");
+
+    this.importJob = { running: true, done: false, error: null, log: [], progress: null, phase: null, summary: null };
+    const dst = this._config.dst;
+    const backupCfg = this._config.backup;
+    const log = (line: string): void => {
+      this.importJob.log.push(line);
+      if (this.importJob.log.length > INSTALL_LOG_MAX) this.importJob.log.shift();
+    };
+    const progress = (pct: number | null, phase: string | null): void => {
+      this.importJob.progress = pct;
+      this.importJob.phase = phase;
+    };
+
+    const stagingDir = join(appBaseDir(), "imports", `stage-${randomUUID()}`);
+    mkdirSync(stagingDir, { recursive: true });
+
+    void (async () => {
+      let backupFile: string | null = null;
+      try {
+        // backup ของเดิมก่อนทับ (ถ้ามี cluster อยู่) เผื่อต้อง rollback
+        if (existsSync(clusterDir(dst))) {
+          log("backing up current cluster (pre-import)...");
+          backupFile = (await createBackup(dst, backupCfg, "pre-import")).file;
+          log(`backup: ${backupFile}`);
+        }
+        const result = await importCluster(dst, source, opts, stagingDir, { log, progress });
+        for (const w of result.warnings) log(`⚠️ ${w}`);
+        this.importJob.summary = result;
+        this.importJob.done = true;
+        this.importJob.progress = 100;
+        this.importJob.phase = null;
+        log(`✓ imported ${result.applied} file(s), shards: ${result.shards.join(", ") || "-"}`);
+      } catch (err: unknown) {
+        this.importJob.error = err instanceof Error ? err.message : String(err);
+        log(`✗ ${this.importJob.error}`);
+        if (backupFile) {
+          try {
+            log("rolling back to pre-import backup...");
+            await restoreBackup(dst, backupCfg, backupFile);
+            log("rolled back");
+          } catch (rb) {
+            log(`✗ rollback failed: ${rb instanceof Error ? rb.message : String(rb)}`);
+          }
+        }
+      } finally {
+        try {
+          rmSync(stagingDir, { recursive: true, force: true });
+        } catch {
+          // ลบ staging ไม่ได้ก็ข้าม
+        }
+        // ลบไฟล์ archive ที่อัปโหลดมา (เฉพาะที่อยู่ในโฟลเดอร์ imports ของเรา)
+        if (source.kind === "archive" && source.path.startsWith(join(appBaseDir(), "imports"))) {
+          try {
+            rmSync(source.path, { force: true });
+          } catch {
+            // ข้าม
+          }
+        }
+        this.importJob.running = false;
+      }
+    })();
   }
 
   /** start บอท; throw ถ้า config ยังไม่ครบ หรือกำลังรันอยู่ */

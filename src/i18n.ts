@@ -191,6 +191,12 @@ const MESSAGES = {
   token_saved: { en: "cluster_token.txt saved", th: "บันทึก cluster_token.txt แล้ว" },
   err_token_empty: { en: "token must not be empty", th: "token ต้องไม่ว่าง" },
 
+  // ── import world ───────────────────────────────────────────────
+  err_import_bad_archive: { en: "unsupported archive type (use .zip or .tar.gz)", th: "ชนิดไฟล์ไม่รองรับ (ใช้ .zip หรือ .tar.gz)" },
+  err_import_bad_upload: { en: "invalid uploadId", th: "uploadId ไม่ถูกต้อง" },
+  err_import_upload_missing: { en: "uploaded file not found (upload again)", th: "ไม่พบไฟล์ที่อัปโหลด (อัปโหลดใหม่)" },
+  err_import_no_path: { en: "folder path is required", th: "ต้องระบุ path โฟลเดอร์" },
+
   // ── slash command descriptions (commands.ts) ───────────────────
   cmd_start: { en: "Start the DST server (Master first, then other shards)", th: "เปิด DST server (Master ก่อน แล้ว shard อื่น)" },
   cmd_stop: { en: "Stop the DST server gracefully (saves before shutdown)", th: "ปิด DST server แบบ graceful (save ก่อนปิด)" },

@@ -21,3 +21,5 @@ backups/
 games/
 # SteamCMD bootstrapper ที่โหลดมาเอง
 steamcmd/
+# ไฟล์ staging/upload ชั่วคราวของระบบ import world
+imports/
