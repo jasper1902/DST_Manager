@@ -198,6 +198,7 @@ const MESSAGES = {
   },
   err_set_cluster_first: { en: "set the cluster name first", th: "ตั้งชื่อ cluster ก่อน" },
   err_bad_shard: { en: "unknown shard", th: "ไม่รู้จัก shard นี้" },
+  err_bad_mod_id: { en: "invalid workshop id (digits only)", th: "workshop id ไม่ถูกต้อง (ต้องเป็นตัวเลข)" },
   err_bad_admin_id: { en: "invalid game id (must look like KU_…)", th: "game id ไม่ถูกต้อง — ต้องเป็นรูปแบบ KU_…" },
   token_saved: { en: "cluster_token.txt saved", th: "บันทึก cluster_token.txt แล้ว" },
   err_token_empty: { en: "token must not be empty", th: "token ต้องไม่ว่าง" },

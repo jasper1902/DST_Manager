@@ -8,8 +8,18 @@ import { addAdmin, isValidAdminId, readAdminList, removeAdmin } from "../dst/adm
 import { archiveKind } from "../dst/archive.js";
 import { setConfig, showConfig, whitelistedKeys } from "../dst/clusterConfig.js";
 import { hasClusterToken, readClusterToken, writeClusterToken } from "../dst/clusterToken.js";
-import { modOverridesPath, shardDir } from "../dst/paths.js";
-import { appBaseDir } from "../dst/paths.js";
+import {
+  addMod,
+  hasMod,
+  type LuaValue,
+  parseModInfoSchema,
+  readModConfigValues,
+  removeMod,
+  setModConfig,
+  setModEnabled,
+} from "../dst/modConfig.js";
+import { getModList } from "../dst/mods.js";
+import { appBaseDir, modInfoPath, modOverridesPath, shardDir } from "../dst/paths.js";
 import { discoverShards } from "../dst/shards.js";
 import { asLang, makeT } from "../i18n.js";
 import type { ImportSource } from "../dst/importer.js";
@@ -26,6 +36,28 @@ function shardList(app: BotApp): string[] {
 /** เลือก shard ที่ขอ ถ้าอยู่ในรายการ ไม่งั้น fallback ตัวแรก */
 function pickShard(requested: string | null, shards: string[]): string {
   return requested && shards.includes(requested) ? requested : (shards[0] ?? "Master");
+}
+
+/** ม็อดนี้มี config form ได้ไหม (modinfo ถูกดาวน์โหลด + parse schema ได้) */
+function modHasConfig(app: BotApp, id: string): boolean {
+  const p = modInfoPath(app.config.dst, id);
+  if (!p) return false;
+  try {
+    return parseModInfoSchema(readFileSync(p, "utf8")).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** sanitize values จาก client ให้เหลือเฉพาะ primitive (string/number/boolean) */
+function cleanConfigValues(v: unknown): Record<string, LuaValue> {
+  const out: Record<string, LuaValue> = {};
+  if (v && typeof v === "object") {
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+      if (typeof val === "string" || typeof val === "number" || typeof val === "boolean") out[k] = val;
+    }
+  }
+  return out;
 }
 
 /** เพดานขนาดไฟล์ที่อัปโหลด import (world อาจใหญ่ แต่กัน disk เต็มจากไฟล์เดียว) */
@@ -341,6 +373,60 @@ async function handleApi(app: BotApp, req: IncomingMessage, res: ServerResponse,
     const content = typeof body.content === "string" ? body.content : "";
     mkdirSync(shardDir(config.dst, shard), { recursive: true });
     writeFileSync(modOverridesPath(config.dst, shard), content, "utf8");
+    return json(res, 200, { ok: true, note: t("effect_on_restart") });
+  }
+
+  // ── mods manager (friendly): list / toggle / add / remove + per-mod config ──
+  if (req.method === "GET" && path === "/api/mods/manage") {
+    const shards = shardList(app);
+    const q = new URLSearchParams((req.url ?? "").split("?")[1] ?? "");
+    const shard = pickShard(q.get("shard"), shards);
+    const mods = (await getModList(config.dst, [shard])) ?? [];
+    const list = mods.map((m) => ({ id: m.id, name: m.name, enabled: m.enabled, url: m.url, hasConfig: modHasConfig(app, m.id) }));
+    return json(res, 200, { shards, shard, mods: list });
+  }
+  if (req.method === "POST" && path === "/api/mods/manage") {
+    const body = await readBody(req, t);
+    const shards = shardList(app);
+    const shard = s(body.shard);
+    if (!/^[A-Za-z0-9_]+$/.test(shard) || !shards.includes(shard)) return json(res, 400, { error: t("err_bad_shard") });
+    const id = s(body.id);
+    if (!/^\d+$/.test(id)) return json(res, 400, { error: t("err_bad_mod_id") });
+    const p = modOverridesPath(config.dst, shard);
+    let text = existsSync(p) ? readFileSync(p, "utf8") : "";
+    if (body.action === "add") text = addMod(text, id);
+    else if (body.action === "remove") text = removeMod(text, id);
+    else if (body.action === "toggle") text = setModEnabled(text, id, body.enabled === true);
+    else return json(res, 400, { error: t("err_bad_shard") });
+    mkdirSync(shardDir(config.dst, shard), { recursive: true });
+    writeFileSync(p, text, "utf8");
+    return json(res, 200, { ok: true, note: t("effect_on_restart") });
+  }
+  if (req.method === "GET" && path === "/api/mods/config") {
+    const shards = shardList(app);
+    const q = new URLSearchParams((req.url ?? "").split("?")[1] ?? "");
+    const shard = pickShard(q.get("shard"), shards);
+    const id = q.get("id") ?? "";
+    if (!/^\d+$/.test(id)) return json(res, 400, { error: t("err_bad_mod_id") });
+    const mp = modInfoPath(config.dst, id);
+    const schema = mp ? parseModInfoSchema(readFileSync(mp, "utf8")) : [];
+    const op = modOverridesPath(config.dst, shard);
+    const values = existsSync(op) ? readModConfigValues(readFileSync(op, "utf8"), id) : {};
+    return json(res, 200, { id, downloaded: mp !== null, schema, values });
+  }
+  if (req.method === "POST" && path === "/api/mods/config") {
+    const body = await readBody(req, t);
+    const shards = shardList(app);
+    const shard = s(body.shard);
+    if (!/^[A-Za-z0-9_]+$/.test(shard) || !shards.includes(shard)) return json(res, 400, { error: t("err_bad_shard") });
+    const id = s(body.id);
+    if (!/^\d+$/.test(id)) return json(res, 400, { error: t("err_bad_mod_id") });
+    const p = modOverridesPath(config.dst, shard);
+    let text = existsSync(p) ? readFileSync(p, "utf8") : "";
+    if (!hasMod(text, id)) text = addMod(text, id);
+    text = setModConfig(text, id, cleanConfigValues(body.values));
+    mkdirSync(shardDir(config.dst, shard), { recursive: true });
+    writeFileSync(p, text, "utf8");
     return json(res, 200, { ok: true, note: t("effect_on_restart") });
   }
 

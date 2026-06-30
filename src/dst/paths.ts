@@ -97,6 +97,18 @@ export function installedModDir(dst: DSTConfig, id: string): string {
 }
 
 /**
+ * หา modinfo.lua ของม็อด (สำหรับอ่าน schema config) — ลอง mods/workshop-<id> ก่อน
+ * แล้วค่อย ugc_mods/<cluster>/Master/content/322330/<id>; คืน null ถ้ายังไม่ถูกดาวน์โหลด
+ */
+export function modInfoPath(dst: DSTConfig, id: string): string | null {
+  const candidates = [
+    join(installedModDir(dst, id), "modinfo.lua"),
+    join(dst.installDir, "ugc_mods", dst.cluster, "Master", "content", "322330", id, "modinfo.lua"),
+  ];
+  return candidates.find((p) => existsSync(p)) ?? null;
+}
+
+/**
  * args สำหรับ launch shard หนึ่งตัว
  * -console เปิด stdin Lua console, persistent root + conf dir ชี้ที่เก็บ cluster
  */

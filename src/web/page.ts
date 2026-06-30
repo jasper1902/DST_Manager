@@ -257,6 +257,21 @@ export const PAGE = `<!doctype html>
     </div>
 
     <div class="card">
+      <h2><span data-i18n="sec_modsmgr">🧩 Mods manager</span> <span class="muted normal-case tracking-normal font-normal" data-i18n="sec_modsmgr_note">(enable/disable · add · config — takes effect on restart)</span></h2>
+      <div class="controls mb-2">
+        <span class="text-sm text-slate-400" data-i18n="mm_shard">Shard:</span>
+        <select id="mm-shard"></select>
+      </div>
+      <div class="row">
+        <label data-i18n="mm_add_label">Add by workshop id</label>
+        <input id="mm-add-id" type="text" placeholder="378160973">
+        <button class="clsave" id="btn-mm-add" data-i18n="admin_add">Add</button>
+      </div>
+      <div id="mm-list" class="mt-3 text-sm text-slate-400">—</div>
+      <div id="mm-config" class="hidden mt-3 border-t border-slate-800 pt-3"></div>
+    </div>
+
+    <div class="card">
       <h2><span data-i18n="sec_modoverrides">🧩 Mod config (modoverrides.lua)</span> <span class="muted normal-case tracking-normal font-normal" data-i18n="sec_modoverrides_note">(Lua — takes effect on restart)</span></h2>
       <div class="controls mb-2">
         <span class="text-sm text-slate-400" data-i18n="mo_shard">Shard:</span>
@@ -329,6 +344,10 @@ export const PAGE = `<!doctype html>
       btn_mods_setup: '🧩 Download / set up mods', mods_progress: 'Mod download progress',
       mods_need_stop: '⚠️ Stop the bot to set up mods', mods_confirm: "Download this world's mods via SteamCMD? (registers from modoverrides.lua, may take a while)",
       mods_provisioning: '⏳ Setting up mods...', mods_done: '✓ Mods set up', mods_failed: '✗ Mod setup failed: ',
+      sec_modsmgr: '🧩 Mods manager', sec_modsmgr_note: '(enable/disable · add · config — takes effect on restart)',
+      mm_shard: 'Shard:', mm_add_label: 'Add by workshop id', mm_none: 'No mods in this world',
+      mm_no_config: 'This mod has no editable config (or is not downloaded yet) — use the raw editor below',
+      mm_config_for: 'Config for', mm_config_saved: '✓ mod config saved', mm_remove_confirm: 'Remove this mod from the world?',
       sec_modoverrides: '🧩 Mod config (modoverrides.lua)', sec_modoverrides_note: '(Lua — takes effect on restart)',
       mo_shard: 'Shard:', btn_save_modoverrides: '💾 Save modoverrides.lua',
       mo_saved: '✓ modoverrides.lua saved', mo_load_err: "Can't read modoverrides.lua: ",
@@ -408,6 +427,10 @@ export const PAGE = `<!doctype html>
       btn_mods_setup: '🧩 ดาวน์โหลด / ติดตั้งม็อด', mods_progress: 'ความคืบหน้าโหลดม็อด',
       mods_need_stop: '⚠️ หยุดบอทก่อนถึงจะติดตั้งม็อดได้', mods_confirm: 'ดาวน์โหลดม็อดของโลกนี้ผ่าน SteamCMD? (อ่านจาก modoverrides.lua อาจใช้เวลาสักครู่)',
       mods_provisioning: '⏳ กำลังติดตั้งม็อด...', mods_done: '✓ ติดตั้งม็อดเสร็จ', mods_failed: '✗ ติดตั้งม็อดไม่สำเร็จ: ',
+      sec_modsmgr: '🧩 จัดการม็อด', sec_modsmgr_note: '(เปิด/ปิด · เพิ่ม · ตั้งค่า — มีผลตอน restart)',
+      mm_shard: 'Shard:', mm_add_label: 'เพิ่มด้วย workshop id', mm_none: 'โลกนี้ยังไม่มีม็อด',
+      mm_no_config: 'ม็อดนี้ไม่มี config ให้แก้ (หรือยังไม่ถูกดาวน์โหลด) — ใช้ raw editor ด้านล่างแทน',
+      mm_config_for: 'ตั้งค่าม็อด', mm_config_saved: '✓ บันทึกค่าม็อดแล้ว', mm_remove_confirm: 'ลบม็อดนี้ออกจากโลก?',
       sec_modoverrides: '🧩 ตั้งค่าม็อด (modoverrides.lua)', sec_modoverrides_note: '(Lua — มีผลตอน restart)',
       mo_shard: 'Shard:', btn_save_modoverrides: '💾 บันทึก modoverrides.lua',
       mo_saved: '✓ บันทึก modoverrides.lua แล้ว', mo_load_err: 'อ่าน modoverrides.lua ไม่ได้: ',
@@ -469,7 +492,7 @@ export const PAGE = `<!doctype html>
     localStorage.setItem('dstTab', name);
     secs.forEach(function(s){ s.classList.toggle('hidden', s.getAttribute('data-tab')!==name); });
     document.querySelectorAll('#tabs .tab').forEach(function(b){ b.classList.toggle('active', b.getAttribute('data-tab')===name); });
-    if(name==='advanced') loadAdmins(); // refresh admin list + online players when opening Advanced
+    if(name==='advanced'){ loadAdmins(); loadModsManager(); } // refresh admin + mods manager when opening Advanced
   }
 
   var TKEY = 'dstToken';
@@ -826,6 +849,59 @@ export const PAGE = `<!doctype html>
     catch(e){ toast('✗ '+e.message); }
   }
 
+  // ── mods manager (friendly) ──
+  async function loadModsManager(){
+    try{
+      var sel = el('mm-shard'); var shard = sel.value;
+      var d = await api('/api/mods/manage' + (shard?('?shard='+encodeURIComponent(shard)):''));
+      if(sel.options.length===0) fillShardSelect(sel, d.shards, d.shard);
+      var html;
+      if(!d.mods.length) html = '<span class="muted">'+h(t('mm_none'))+'</span>';
+      else {
+        html = '<ul class="list-none p-0 m-0">';
+        for(var i=0;i<d.mods.length;i++){ var m=d.mods[i];
+          html += '<li class="flex items-center gap-2 mb-1.5">'
+            + '<button class="mmtoggle ghost !px-2 !py-0.5 text-xs" data-id="'+h(m.id)+'" data-en="'+(m.enabled?'1':'0')+'" title="'+(m.enabled?'on':'off')+'">'+(m.enabled?'🟢':'⚪')+'</button>'
+            + '<a href="'+h(m.url)+'" target="_blank" rel="noopener" class="text-sky-400 hover:underline flex-1 truncate">'+h(m.name)+'</a>'
+            + (m.hasConfig ? '<button class="mmcfg ghost !px-2 !py-0.5 text-xs" data-id="'+h(m.id)+'" title="config">⚙️</button>' : '')
+            + '<button class="mmrm ghost !px-2 !py-0.5 text-xs" data-id="'+h(m.id)+'" title="remove">✕</button>'
+            + '</li>';
+        }
+        html += '</ul>';
+      }
+      el('mm-list').innerHTML = html;
+    }catch(e){ el('mm-list').innerHTML = '<span class="warn">✗ '+h(e.message)+'</span>'; }
+  }
+  async function mmAction(action, id, enabled){
+    try{ var r = await api('/api/mods/manage','POST',{shard:el('mm-shard').value, action:action, id:id, enabled:enabled}); toast('✓ ('+r.note+')'); loadModsManager(); loadMods(); }
+    catch(e){ toast('✗ '+e.message); }
+  }
+  async function mmShowConfig(id){
+    var box = el('mm-config');
+    try{
+      var d = await api('/api/mods/config?id='+encodeURIComponent(id)+'&shard='+encodeURIComponent(el('mm-shard').value));
+      if(!d.schema.length){ box.innerHTML = '<span class="warn">'+h(t('mm_no_config'))+'</span>'; box.classList.remove('hidden'); return; }
+      var cur = d.values || {};
+      var html = '<div class="text-sm font-semibold text-slate-200 mb-2">⚙️ '+h(t('mm_config_for'))+' '+h(id)+'</div>';
+      for(var i=0;i<d.schema.length;i++){ var o=d.schema[i];
+        var selv = (o.name in cur) ? cur[o.name] : o.default;
+        html += '<div class="row"><label title="'+h(o.name)+'">'+h(o.label)+'</label><select class="mmopt" data-name="'+h(o.name)+'">';
+        for(var j=0;j<o.options.length;j++){ var c=o.options[j]; var v=JSON.stringify(c.data);
+          html += '<option value="'+h(v)+'"'+(JSON.stringify(selv)===v?' selected':'')+'>'+h(c.description)+'</option>';
+        }
+        html += '</select></div>';
+      }
+      html += '<div class="controls mt-2"><button class="clsave" id="btn-mm-cfg-save" data-id="'+h(id)+'">'+h(t('save'))+'</button><button class="ghost" id="btn-mm-cfg-close">'+h(t('cancel'))+'</button></div>';
+      box.innerHTML = html; box.classList.remove('hidden');
+    }catch(e){ box.innerHTML = '<span class="warn">✗ '+h(e.message)+'</span>'; box.classList.remove('hidden'); }
+  }
+  async function mmSaveConfig(id){
+    var values = {};
+    document.querySelectorAll('#mm-config .mmopt').forEach(function(s){ try{ values[s.getAttribute('data-name')] = JSON.parse(s.value); }catch(e){} });
+    try{ var r = await api('/api/mods/config','POST',{shard:el('mm-shard').value, id:id, values:values}); toast(t('mm_config_saved')+' ('+r.note+')'); el('mm-config').classList.add('hidden'); }
+    catch(e){ toast('✗ '+e.message); }
+  }
+
   async function loadToken(){
     try{
       var d = await api('/api/token');
@@ -961,7 +1037,7 @@ export const PAGE = `<!doctype html>
     renderSetup(); loadSetup();
     syncImportUI();
     homeStage = ''; renderHome(); renderWizard();
-    loadState(); loadStatus(); loadMods(); loadCluster(); loadServerStatus(); loadToken(); loadServerLog(); loadAdmins();
+    loadState(); loadStatus(); loadMods(); loadCluster(); loadServerStatus(); loadToken(); loadServerLog(); loadAdmins(); loadModsManager();
     try{ await api('/api/lang','POST',{language:LANG}); }catch(e){}
   }
 
@@ -1029,6 +1105,8 @@ export const PAGE = `<!doctype html>
   el('log-shard').addEventListener('change', loadServerLog);
   el('btn-admin-add-player').addEventListener('click', function(){ doAddAdmin(el('admin-player').value); });
   el('btn-admin-add-id').addEventListener('click', function(){ var v=el('admin-id').value.trim(); if(v){ doAddAdmin(v); el('admin-id').value=''; } });
+  el('mm-shard').addEventListener('change', function(){ el('mm-config').classList.add('hidden'); loadModsManager(); });
+  el('btn-mm-add').addEventListener('click', function(){ var v=el('mm-add-id').value.trim(); if(/^\d+$/.test(v)){ mmAction('add', v); el('mm-add-id').value=''; } else toast('✗ '+t('admin_add')); });
   el('btn-gohome').addEventListener('click', function(){ showTab('home'); startServer(); });
   el('imp-kind').addEventListener('change', syncImportUI);
   el('imp-mode').addEventListener('change', syncImportUI);
@@ -1055,8 +1133,14 @@ export const PAGE = `<!doctype html>
   });
   document.addEventListener('click', function(e){
     var tg = e.target;
-    if(tg.classList && tg.classList.contains('clsave')) saveCluster(tg.dataset.key);
+    if(tg.classList && tg.classList.contains('clsave') && tg.dataset.key) saveCluster(tg.dataset.key);
     var ab = tg.closest ? tg.closest('.admrm') : null; if(ab) doRemoveAdmin(ab.getAttribute('data-id'));
+    if(!tg.closest) return;
+    var mt = tg.closest('.mmtoggle'); if(mt) mmAction('toggle', mt.getAttribute('data-id'), mt.getAttribute('data-en')!=='1');
+    var mc = tg.closest('.mmcfg'); if(mc) mmShowConfig(mc.getAttribute('data-id'));
+    var mr = tg.closest('.mmrm'); if(mr && confirm(t('mm_remove_confirm'))) mmAction('remove', mr.getAttribute('data-id'));
+    if(tg.id==='btn-mm-cfg-save') mmSaveConfig(tg.getAttribute('data-id'));
+    if(tg.id==='btn-mm-cfg-close') el('mm-config').classList.add('hidden');
   });
 
   applyLang();
