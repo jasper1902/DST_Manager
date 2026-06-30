@@ -61,6 +61,11 @@ export function clusterTokenPath(dst: DSTConfig): string {
   return join(clusterDir(dst), "cluster_token.txt");
 }
 
+/** path ของ adminlist.txt (รายชื่อ admin = Klei UserID/game id ต่อบรรทัด) */
+export function adminListPath(dst: DSTConfig): string {
+  return join(clusterDir(dst), "adminlist.txt");
+}
+
 /** path ของ server.ini ต่อ shard */
 export function serverIniPath(dst: DSTConfig, shard: string): string {
   return join(shardDir(dst, shard), "server.ini");

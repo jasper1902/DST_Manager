@@ -6,7 +6,7 @@ import { ensureClusterFiles } from "./clusterScaffold.js";
 import { hasClusterToken } from "./clusterToken.js";
 import { syncModsSetup } from "./modsSetup.js";
 import { console_ } from "./console.js";
-import { parsePlayerRow, parseWorldInfo, type WorldInfo } from "./logParser.js";
+import { parsePlayerDetail, parseWorldInfo, type PlayerDetail, type WorldInfo } from "./logParser.js";
 import { getModList, type ModEntry } from "./mods.js";
 import { binaryCwd, binaryPath, launchArgs, serverInstalled } from "./paths.js";
 import { ShardProcess, type ShardState } from "./process.js";
@@ -85,6 +85,9 @@ export class DSTManager extends EventEmitter {
   private readonly shards = new Map<string, ShardProcess>();
   /** timestamp ของการ auto-restart ล่าสุดต่อ shard (กัน crash loop) */
   private readonly crashTimes = new Map<string, number[]>();
+  /** log รวมทุก shard ตามลำดับเวลา (มี prefix [shard]) สำหรับมุมมอง "ทุก shard พร้อมกัน" */
+  private readonly combinedLog: string[] = [];
+  private readonly logCap: number;
 
   constructor(config: AppConfig) {
     super();
@@ -92,6 +95,7 @@ export class DSTManager extends EventEmitter {
     this.backupCfg = config.backup;
     this.autoRestart = config.autoRestart;
     this.t = makeT(config.language);
+    this.logCap = config.logBufferSize;
     this.shardNames = resolveShardNames(config.dst);
     console.log(`✓ shards: ${this.shardNames.join(", ")}`);
 
@@ -103,9 +107,11 @@ export class DSTManager extends EventEmitter {
         args: launchArgs(this.dst, name),
         bufferSize: config.logBufferSize,
       });
-      shard.on("line", (line: string) =>
-        this.emit("line", { shard: name, line } satisfies ManagerLineEvent),
-      );
+      shard.on("line", (line: string) => {
+        this.combinedLog.push(`[${name}] ${line}`);
+        if (this.combinedLog.length > this.logCap) this.combinedLog.shift();
+        this.emit("line", { shard: name, line } satisfies ManagerLineEvent);
+      });
       shard.on("state", (state: ShardState) => this.emit("state", name, state));
       shard.on("exit", (code: number | null, _signal, intentional: boolean) => {
         this.emit("exit", name, code);
@@ -238,6 +244,12 @@ export class DSTManager extends EventEmitter {
     return this.getShard(shard).logs(limit);
   }
 
+  /** log รวมทุก shard ตามลำดับเวลา (prefix [shard]) — สำหรับมุมมอง "ทุก shard พร้อมกัน" */
+  combinedLogs(limit?: number): string[] {
+    if (limit === undefined || limit >= this.combinedLog.length) return [...this.combinedLog];
+    return this.combinedLog.slice(this.combinedLog.length - limit);
+  }
+
   /**
    * รายการม็อดที่ cluster เปิดใช้ (อ่านจาก modoverrides.lua + resolve ชื่อจาก Steam)
    * ไม่ขึ้นกับว่า server รันอยู่หรือไม่ (อ่านจากไฟล์ตรง ๆ)
@@ -285,20 +297,24 @@ export class DSTManager extends EventEmitter {
    * best-effort — pattern อาจต้องจูน (ดู logParser) คืนรายชื่อ unique เรียงตามเจอ
    */
   async listPlayers(): Promise<string[]> {
+    return (await this.listPlayersDetailed()).map((p) => p.name);
+  }
+
+  /** เหมือน listPlayers แต่คืน userid (KU_) ด้วย — ใช้เลือกเพิ่ม admin จากคนที่ออนไลน์ */
+  async listPlayersDetailed(): Promise<PlayerDetail[]> {
     const running = this.activeShards()
       .map((name) => this.getShard(name))
       .filter((s) => s.isRunning());
 
-    const results = await Promise.all(
-      running.map((shard) => this.collectPlayers(shard)),
-    );
+    const results = await Promise.all(running.map((shard) => this.collectPlayers(shard)));
 
     const seen = new Set<string>();
-    const players: string[] = [];
+    const players: PlayerDetail[] = [];
     for (const list of results) {
       for (const p of list) {
-        if (!seen.has(p)) {
-          seen.add(p);
+        const key = p.userid || p.name;
+        if (!seen.has(key)) {
+          seen.add(key);
           players.push(p);
         }
       }
@@ -339,12 +355,12 @@ export class DSTManager extends EventEmitter {
     });
   }
 
-  /** ยิง c_listallplayers ไป shard เดียวแล้วเก็บชื่อผู้เล่นจาก stdout */
-  private collectPlayers(shard: ShardProcess): Promise<string[]> {
-    return new Promise<string[]>((resolve) => {
-      const found: string[] = [];
+  /** ยิง c_listallplayers ไป shard เดียวแล้วเก็บผู้เล่น (userid+ชื่อ) จาก stdout */
+  private collectPlayers(shard: ShardProcess): Promise<PlayerDetail[]> {
+    return new Promise<PlayerDetail[]>((resolve) => {
+      const found: PlayerDetail[] = [];
       const onLine = (line: string): void => {
-        const player = parsePlayerRow(line);
+        const player = parsePlayerDetail(line);
         if (player) found.push(player);
       };
       shard.on("line", onLine);

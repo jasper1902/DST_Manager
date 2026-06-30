@@ -6,11 +6,16 @@ import {
   ComponentType,
   GatewayIntentBits,
   MessageFlags,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
   type AutocompleteInteraction,
   type ButtonInteraction,
   type ChatInputCommandInteraction,
   type Guild,
   type Interaction,
+  type ModalSubmitInteraction,
+  type RepliableInteraction,
   type User,
 } from "discord.js";
 import type { AppConfig } from "../config.js";
@@ -63,6 +68,10 @@ export function createBot(config: AppConfig, manager: DSTManager): Client {
     }
     if (interaction.isButton()) {
       void handleButton(interaction, config, manager, channels);
+      return;
+    }
+    if (interaction.isModalSubmit()) {
+      void handleModal(interaction, config, manager, channels);
       return;
     }
     if (!interaction.isChatInputCommand()) return;
@@ -289,7 +298,7 @@ async function handleButton(
   void logAction(interaction.client, channels, interaction.user, `${t("button_prefix")} ${action}`);
 
   try {
-    await runControlAction(interaction, manager, action, t);
+    await runControlAction(interaction, config, manager, action, t);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     const content = t("error_occurred", msg);
@@ -301,6 +310,7 @@ async function handleButton(
 /** map ปุ่ม → เรียก manager (ตอบแบบ ephemeral เสมอ ห้อง control จะได้ไม่รก) */
 async function runControlAction(
   interaction: ButtonInteraction,
+  config: AppConfig,
   manager: DSTManager,
   action: string,
   t: T,
@@ -349,11 +359,116 @@ async function runControlAction(
         : t("no_players");
       return void (await interaction.editReply(body));
     }
+    case "mods": {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const mods = await manager.getMods();
+      if (mods === null) return void (await interaction.editReply(t("mods_no_file")));
+      if (mods.length === 0) return void (await interaction.editReply(t("mods_none_enabled")));
+      const on = mods.filter((m) => m.enabled).length;
+      const lines = mods.map((m) => `${m.enabled ? "🟢" : "⚪"} [${m.name}](${m.url})`);
+      const chunks = chunkLines(lines, 1900);
+      return void (await interaction.editReply(`${t("mods_header", on, mods.length)}\n${chunks[0] ?? "—"}`));
+    }
+    case "logs": {
+      const log = manager.logs("Master", 20);
+      const body = log.length ? log.join("\n") : t("no_logs");
+      return void (await interaction.reply({
+        content: `${t("logs_header", "Master", log.length)}\n${fitCodeBlock(body)}`,
+        flags: MessageFlags.Ephemeral,
+      }));
+    }
+    case "config": {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const values = await showConfig(config.dst);
+      const body = values
+        .map((v) => `${v.key} = ${SENSITIVE_KEYS.has(v.key) && v.value !== "(unset)" ? "•••" : v.value}`)
+        .join("\n");
+      return void (await interaction.editReply(fitCodeBlock(body)));
+    }
+    case "announce":
+      return void (await interaction.showModal(buildAnnounceModal(t)));
+    case "configset":
+      return void (await interaction.showModal(buildConfigSetModal(t)));
+    case "rollback":
+      return await doRollback(interaction, manager, t, 1);
+    case "regenerate":
+      return await doRegenerate(interaction, manager, t);
     default:
       return void (await interaction.reply({
         content: t("unknown_button", action),
         flags: MessageFlags.Ephemeral,
       }));
+  }
+}
+
+// ── modals (ปุ่มที่ต้องกรอกค่า: announce, config set) ─────────────────────
+
+function buildAnnounceModal(t: T): ModalBuilder {
+  return new ModalBuilder().setCustomId("modal:announce").setTitle(t("modal_announce_title")).addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("message")
+        .setLabel(t("modal_announce_field"))
+        .setStyle(TextInputStyle.Paragraph)
+        .setMaxLength(256)
+        .setRequired(true),
+    ),
+  );
+}
+
+function buildConfigSetModal(t: T): ModalBuilder {
+  return new ModalBuilder().setCustomId("modal:configset").setTitle(t("modal_configset_title")).addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder().setCustomId("key").setLabel(t("modal_configset_key")).setStyle(TextInputStyle.Short).setRequired(true),
+    ),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder().setCustomId("value").setLabel(t("modal_configset_value")).setStyle(TextInputStyle.Short).setRequired(true),
+    ),
+  );
+}
+
+/** จัดการ modal submit (announce / config set) — เช็คสิทธิ์ซ้ำ (interaction แยกจากปุ่ม) */
+async function handleModal(
+  interaction: ModalSubmitInteraction,
+  config: AppConfig,
+  manager: DSTManager,
+  channels: ProvisionedChannels | null,
+): Promise<void> {
+  if (!interaction.customId.startsWith("modal:")) return;
+  const kind = interaction.customId.slice("modal:".length);
+  const t = makeT(config.language);
+
+  const ok = await isAuthorized(interaction.guild, interaction.user.id, config.discord.adminRoleId);
+  if (!ok) {
+    await interaction.reply({ content: t("btn_no_permission"), flags: MessageFlags.Ephemeral });
+    return;
+  }
+  void logAction(interaction.client, channels, interaction.user, `${t("button_prefix")} ${kind}`);
+
+  try {
+    if (kind === "announce") {
+      const message = interaction.fields.getTextInputValue("message");
+      const sent = manager.announce(message);
+      await interaction.reply(
+        sent === 0
+          ? { content: t("announce_none"), flags: MessageFlags.Ephemeral }
+          : { content: t("announce_done", sent, message) },
+      );
+      return;
+    }
+    if (kind === "configset") {
+      const key = interaction.fields.getTextInputValue("key").trim();
+      const value = interaction.fields.getTextInputValue("value");
+      const result = await setConfig(config.dst, key, value);
+      const shown = SENSITIVE_KEYS.has(result.key) ? "•••" : result.value;
+      await interaction.reply({ content: t("config_set", result.key, shown), flags: MessageFlags.Ephemeral });
+      return;
+    }
+    await interaction.reply({ content: t("unknown_button", kind), flags: MessageFlags.Ephemeral });
+  } catch (err: unknown) {
+    const content = t("error_occurred", err instanceof Error ? err.message : String(err));
+    if (interaction.deferred || interaction.replied) await interaction.editReply({ content });
+    else await interaction.reply({ content, flags: MessageFlags.Ephemeral });
   }
 }
 
@@ -511,7 +626,7 @@ async function cmdSave(
 
 /** ยังไม่มี shard รัน → ตอบ ephemeral แล้วคืน false (caller หยุด) */
 async function requireRunning(
-  interaction: ChatInputCommandInteraction,
+  interaction: RepliableInteraction,
   manager: DSTManager,
   action: string,
   t: T,
@@ -529,7 +644,7 @@ async function requireRunning(
  * กดยืนยัน → เรียก run() แล้วแก้ข้อความเป็นผลลัพธ์; ไม่กด/ยกเลิก → ปิดเงียบ
  */
 async function confirmAndRun(
-  interaction: ChatInputCommandInteraction,
+  interaction: RepliableInteraction,
   t: T,
   warning: string,
   run: () => Promise<string>,
@@ -570,23 +685,37 @@ async function confirmAndRun(
   }
 }
 
+/** rollback (ใช้ร่วมทั้ง slash + ปุ่ม) — เช็ค running + ยืนยัน + backup ก่อน */
+async function doRollback(
+  interaction: RepliableInteraction,
+  manager: DSTManager,
+  t: T,
+  count: number,
+): Promise<void> {
+  if (!(await requireRunning(interaction, manager, "rollback", t))) return;
+  await confirmAndRun(interaction, t, t("rollback_warning", count), async () => {
+    const info = await manager.backup("pre-rollback");
+    manager.rollback(count);
+    return t("rollback_done", count, info.file);
+  });
+}
+
+/** regenerate world (ใช้ร่วมทั้ง slash + ปุ่ม) */
+async function doRegenerate(interaction: RepliableInteraction, manager: DSTManager, t: T): Promise<void> {
+  if (!(await requireRunning(interaction, manager, "regenerate", t))) return;
+  await confirmAndRun(interaction, t, t("regenerate_warning"), async () => {
+    const info = await manager.backup("pre-regenerate");
+    manager.regenerateWorld();
+    return t("regenerate_done", info.file);
+  });
+}
+
 async function cmdRollback(
   interaction: ChatInputCommandInteraction,
   manager: DSTManager,
   t: T,
 ): Promise<void> {
-  if (!(await requireRunning(interaction, manager, "rollback", t))) return;
-  const count = interaction.options.getInteger("count") ?? 1;
-  await confirmAndRun(
-    interaction,
-    t,
-    t("rollback_warning", count),
-    async () => {
-      const info = await manager.backup("pre-rollback");
-      manager.rollback(count);
-      return t("rollback_done", count, info.file);
-    },
-  );
+  await doRollback(interaction, manager, t, interaction.options.getInteger("count") ?? 1);
 }
 
 async function cmdRegenerate(
@@ -594,17 +723,7 @@ async function cmdRegenerate(
   manager: DSTManager,
   t: T,
 ): Promise<void> {
-  if (!(await requireRunning(interaction, manager, "regenerate", t))) return;
-  await confirmAndRun(
-    interaction,
-    t,
-    t("regenerate_warning"),
-    async () => {
-      const info = await manager.backup("pre-regenerate");
-      manager.regenerateWorld();
-      return t("regenerate_done", info.file);
-    },
-  );
+  await doRegenerate(interaction, manager, t);
 }
 
 async function cmdBackup(

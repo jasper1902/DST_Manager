@@ -130,13 +130,22 @@ const MESSAGES = {
   control_panel_desc: {
     en:
       "Press a button to control the server (only users with the admin role)\n" +
-      "▶️ start · ⏹️ stop · 🔄 restart · 💾 save · 🗄️ backup · 📊 status · 👥 players\n" +
-      "_Irreversible commands (rollback/regenerate/restore) are slash commands only, for safety_",
+      "▶️ start · ⏹️ stop · 🔄 restart · 💾 save · 🗄️ backup\n" +
+      "📊 status · 👥 players · 🧩 mods · 📜 logs · ⚙️ config\n" +
+      "📢 announce · 📝 set config · ↩️ rollback · 🔥 regenerate (with confirm)\n" +
+      "_restore is slash command only (needs file pick + server stopped)_",
     th:
       "กดปุ่มเพื่อสั่งงาน server (เฉพาะผู้มีสิทธิ์ตาม admin role)\n" +
-      "▶️ เปิด · ⏹️ ปิด · 🔄 รีสตาร์ท · 💾 เซฟ · 🗄️ backup · 📊 สถานะ · 👥 ผู้เล่น\n" +
-      "_คำสั่งย้อนไม่ได้ (rollback/regenerate/restore) ใช้ผ่าน slash command เพื่อความปลอดภัย_",
+      "▶️ เปิด · ⏹️ ปิด · 🔄 รีสตาร์ท · 💾 เซฟ · 🗄️ backup\n" +
+      "📊 สถานะ · 👥 ผู้เล่น · 🧩 ม็อด · 📜 log · ⚙️ config\n" +
+      "📢 ประกาศ · 📝 ตั้งค่า config · ↩️ rollback · 🔥 regenerate (มียืนยัน)\n" +
+      "_restore ใช้ผ่าน slash command เท่านั้น (ต้องเลือกไฟล์ + หยุด server ก่อน)_",
   },
+  modal_announce_title: { en: "Announce to players", th: "ประกาศถึงผู้เล่น" },
+  modal_announce_field: { en: "Message", th: "ข้อความ" },
+  modal_configset_title: { en: "Set cluster.ini config", th: "ตั้งค่า cluster.ini" },
+  modal_configset_key: { en: "Key (e.g. max_players)", th: "Key (เช่น max_players)" },
+  modal_configset_value: { en: "Value", th: "ค่าใหม่" },
 
   // ── Discord: status presence (embed) ───────────────────────────
   voice_offline: { en: "🔴 Offline", th: "🔴 ออฟไลน์" },
@@ -188,6 +197,8 @@ const MESSAGES = {
     th: "เริ่ม server ไม่ได้: ไม่มี cluster_token.txt — ใส่ server token (จาก https://accounts.klei.com) ในช่อง 'Cluster Token' บนหน้าเว็บก่อน",
   },
   err_set_cluster_first: { en: "set the cluster name first", th: "ตั้งชื่อ cluster ก่อน" },
+  err_bad_shard: { en: "unknown shard", th: "ไม่รู้จัก shard นี้" },
+  err_bad_admin_id: { en: "invalid game id (must look like KU_…)", th: "game id ไม่ถูกต้อง — ต้องเป็นรูปแบบ KU_…" },
   token_saved: { en: "cluster_token.txt saved", th: "บันทึก cluster_token.txt แล้ว" },
   err_token_empty: { en: "token must not be empty", th: "token ต้องไม่ว่าง" },
 

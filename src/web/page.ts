@@ -32,6 +32,7 @@ export const PAGE = `<!doctype html>
     .row label { @apply w-52 text-[13px] text-slate-400 flex-none; }
     .row input, .row select { @apply flex-1 w-full bg-slate-950/70 text-slate-100 border border-slate-700/70 rounded-lg px-3 py-2 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30; }
     .finput { @apply w-full bg-slate-950/70 text-slate-100 border border-slate-700/70 rounded-lg px-3 py-2 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30; }
+    .codearea { @apply w-full bg-slate-950/70 text-slate-200 border border-slate-700/70 rounded-lg px-3 py-2 text-xs font-mono outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30 resize-y; }
     button { @apply inline-flex items-center gap-1.5 bg-indigo-600 text-white border-0 rounded-lg px-3.5 py-2 cursor-pointer text-[13px] font-medium transition-all hover:bg-indigo-500 active:scale-[.97] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-indigo-600 disabled:active:scale-100; }
     button.danger { @apply bg-rose-600 hover:bg-rose-500 disabled:hover:bg-rose-600; }
     button.ghost { @apply bg-slate-700 hover:bg-slate-600 disabled:hover:bg-slate-700; }
@@ -97,6 +98,16 @@ export const PAGE = `<!doctype html>
         </div>
         <div id="home-hint" class="warn mt-1"></div>
       </div>
+    </div>
+
+    <div class="card">
+      <h2><span data-i18n="sec_serverlog">📜 Server log (live)</span> <span class="muted normal-case tracking-normal font-normal" data-i18n="sec_serverlog_note">(auto-refreshing)</span></h2>
+      <div class="controls mb-2">
+        <span class="text-sm text-slate-400" data-i18n="log_shard">Shard:</span>
+        <select id="log-shard"></select>
+        <label class="flex items-center gap-1.5 text-[13px] text-slate-400"><input id="log-follow" type="checkbox" checked> <span data-i18n="log_follow">follow newest</span></label>
+      </div>
+      <pre id="serverlog" class="max-h-96">—</pre>
     </div>
   </section>
 
@@ -244,6 +255,34 @@ export const PAGE = `<!doctype html>
       </div>
       <pre id="modlog" class="hidden mt-3 max-h-64"></pre>
     </div>
+
+    <div class="card">
+      <h2><span data-i18n="sec_modoverrides">🧩 Mod config (modoverrides.lua)</span> <span class="muted normal-case tracking-normal font-normal" data-i18n="sec_modoverrides_note">(Lua — takes effect on restart)</span></h2>
+      <div class="controls mb-2">
+        <span class="text-sm text-slate-400" data-i18n="mo_shard">Shard:</span>
+        <select id="mo-shard"></select>
+        <span id="mo-state" class="muted"></span>
+      </div>
+      <textarea id="mo-content" class="codearea" rows="12" spellcheck="false" placeholder="return {}"></textarea>
+      <div class="controls mt-2">
+        <button id="btn-mo-save" data-i18n="btn_save_modoverrides">💾 Save modoverrides.lua</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2><span data-i18n="sec_admins">👑 Admins (adminlist.txt)</span> <span class="muted normal-case tracking-normal font-normal" data-i18n="sec_admins_note">(in-game admins — takes effect on restart)</span></h2>
+      <div id="adminlist" class="text-slate-400 text-sm mb-3">—</div>
+      <div class="row">
+        <label data-i18n="admin_from_player">Online player</label>
+        <select id="admin-player"></select>
+        <button class="clsave" id="btn-admin-add-player" data-i18n="admin_add">Add</button>
+      </div>
+      <div class="row">
+        <label data-i18n="admin_game_id">Game ID</label>
+        <input id="admin-id" type="text" placeholder="KU_xxxxxxxx">
+        <button class="clsave" id="btn-admin-add-id" data-i18n="admin_add">Add</button>
+      </div>
+    </div>
   </section>
 </main>
 <div id="toast"></div>
@@ -290,6 +329,15 @@ export const PAGE = `<!doctype html>
       btn_mods_setup: '🧩 Download / set up mods', mods_progress: 'Mod download progress',
       mods_need_stop: '⚠️ Stop the bot to set up mods', mods_confirm: "Download this world's mods via SteamCMD? (registers from modoverrides.lua, may take a while)",
       mods_provisioning: '⏳ Setting up mods...', mods_done: '✓ Mods set up', mods_failed: '✗ Mod setup failed: ',
+      sec_modoverrides: '🧩 Mod config (modoverrides.lua)', sec_modoverrides_note: '(Lua — takes effect on restart)',
+      mo_shard: 'Shard:', btn_save_modoverrides: '💾 Save modoverrides.lua',
+      mo_saved: '✓ modoverrides.lua saved', mo_load_err: "Can't read modoverrides.lua: ",
+      sec_serverlog: '📜 Server log (live)', sec_serverlog_note: '(auto-refreshing)',
+      log_shard: 'Shard:', log_follow: 'follow newest', log_not_running: 'Server is not running', log_all: 'All shards',
+      sec_admins: '👑 Admins (adminlist.txt)', sec_admins_note: '(in-game admins — takes effect on restart)',
+      admin_from_player: 'Online player', admin_game_id: 'Game ID', admin_add: 'Add',
+      admin_none: 'No admins yet', admin_no_players: '(no players online)', admin_need_running: '(start the server to list players)',
+      admin_added: '✓ admin added', admin_removed: '✓ admin removed',
       sec_cluster: '📝 cluster.ini', sec_cluster_note: '(takes effect on DST restart)',
       status_label: 'Status:', btn_run: '▶️ Run bot', btn_stop: '⏹️ Stop', btn_rebot: '🔄 restart',
       btn_save_config: '💾 Save config', btn_install: '⬇️ Download/update DST server',
@@ -360,6 +408,15 @@ export const PAGE = `<!doctype html>
       btn_mods_setup: '🧩 ดาวน์โหลด / ติดตั้งม็อด', mods_progress: 'ความคืบหน้าโหลดม็อด',
       mods_need_stop: '⚠️ หยุดบอทก่อนถึงจะติดตั้งม็อดได้', mods_confirm: 'ดาวน์โหลดม็อดของโลกนี้ผ่าน SteamCMD? (อ่านจาก modoverrides.lua อาจใช้เวลาสักครู่)',
       mods_provisioning: '⏳ กำลังติดตั้งม็อด...', mods_done: '✓ ติดตั้งม็อดเสร็จ', mods_failed: '✗ ติดตั้งม็อดไม่สำเร็จ: ',
+      sec_modoverrides: '🧩 ตั้งค่าม็อด (modoverrides.lua)', sec_modoverrides_note: '(Lua — มีผลตอน restart)',
+      mo_shard: 'Shard:', btn_save_modoverrides: '💾 บันทึก modoverrides.lua',
+      mo_saved: '✓ บันทึก modoverrides.lua แล้ว', mo_load_err: 'อ่าน modoverrides.lua ไม่ได้: ',
+      sec_serverlog: '📜 Log server (สด)', sec_serverlog_note: '(รีเฟรชอัตโนมัติ)',
+      log_shard: 'Shard:', log_follow: 'ตามล่าสุด', log_not_running: 'server ไม่ได้รันอยู่', log_all: 'ทุก shard',
+      sec_admins: '👑 Admin (adminlist.txt)', sec_admins_note: '(admin ในเกม — มีผลตอน restart)',
+      admin_from_player: 'ผู้เล่นออนไลน์', admin_game_id: 'Game ID', admin_add: 'เพิ่ม',
+      admin_none: 'ยังไม่มี admin', admin_no_players: '(ไม่มีผู้เล่นออนไลน์)', admin_need_running: '(เริ่ม server เพื่อดูรายชื่อผู้เล่น)',
+      admin_added: '✓ เพิ่ม admin แล้ว', admin_removed: '✓ ลบ admin แล้ว',
       sec_cluster: '📝 cluster.ini', sec_cluster_note: '(มีผลตอน restart DST)',
       status_label: 'สถานะ:', btn_run: '▶️ รันบอท', btn_stop: '⏹️ หยุด', btn_rebot: '🔄 restart',
       btn_save_config: '💾 บันทึก config', btn_install: '⬇️ ดาวน์โหลด/อัปเดต DST server',
@@ -412,6 +469,7 @@ export const PAGE = `<!doctype html>
     localStorage.setItem('dstTab', name);
     secs.forEach(function(s){ s.classList.toggle('hidden', s.getAttribute('data-tab')!==name); });
     document.querySelectorAll('#tabs .tab').forEach(function(b){ b.classList.toggle('active', b.getAttribute('data-tab')===name); });
+    if(name==='advanced') loadAdmins(); // refresh admin list + online players when opening Advanced
   }
 
   var TKEY = 'dstToken';
@@ -692,6 +750,82 @@ export const PAGE = `<!doctype html>
     catch(e){ toast('✗ '+e.message); }
   }
 
+  function fillShardSelect(sel, shards, keep){
+    if(!sel || !shards) return;
+    var cur = keep || sel.value;
+    sel.innerHTML = '';
+    for(var i=0;i<shards.length;i++){ var o=document.createElement('option'); o.value=shards[i]; o.textContent=shards[i]; sel.appendChild(o); }
+    if(cur && shards.indexOf(cur)>=0) sel.value = cur;
+  }
+
+  // ── modoverrides.lua editor ──
+  async function loadModoverrides(){
+    try{
+      var sel = el('mo-shard');
+      var shard = sel.value;
+      var d = await api('/api/modoverrides' + (shard?('?shard='+encodeURIComponent(shard)):''));
+      if(sel.options.length===0) fillShardSelect(sel, d.shards, d.shard);
+      el('mo-content').value = d.content || '';
+      el('mo-state').textContent = '';
+    }catch(e){ el('mo-state').innerHTML = '<span class="warn">'+t('mo_load_err')+h(e.message)+'</span>'; }
+  }
+  async function saveModoverrides(){
+    try{ var r = await api('/api/modoverrides','POST',{shard:el('mo-shard').value, content:el('mo-content').value}); toast(t('mo_saved')+' ('+r.note+')'); }
+    catch(e){ toast('✗ '+e.message); }
+  }
+
+  // ── live server log (poll) — shard "all" = ทุก shard รวมกัน (ดีฟอลต์) ──
+  async function loadServerLog(){
+    try{
+      var sel = el('log-shard');
+      var shard = sel.value || 'all';
+      var d = await api('/api/logs?lines=300&shard='+encodeURIComponent(shard));
+      if(sel.options.length===0){
+        var all = document.createElement('option'); all.value='all'; all.textContent=t('log_all'); all.setAttribute('data-i18n','log_all'); sel.appendChild(all);
+        if(d.shards) for(var i=0;i<d.shards.length;i++){ var o=document.createElement('option'); o.value=d.shards[i]; o.textContent=d.shards[i]; sel.appendChild(o); }
+        sel.value = 'all';
+      }
+      var pre = el('serverlog');
+      if(!d.running){ pre.textContent = t('log_not_running'); return; }
+      pre.textContent = (d.lines && d.lines.length) ? d.lines.join('\\n') : '—';
+      if(el('log-follow').checked) pre.scrollTop = pre.scrollHeight;
+    }catch(e){}
+  }
+
+  // ── admins (adminlist.txt) ──
+  async function loadAdmins(){
+    try{
+      var d = await api('/api/admins');
+      var html;
+      if(!d.admins.length) html = '<span class="muted">'+h(t('admin_none'))+'</span>';
+      else {
+        html = '<ul class="list-none p-0 m-0">';
+        for(var i=0;i<d.admins.length;i++){ var id=d.admins[i];
+          html += '<li class="flex items-center gap-2 mb-1"><code class="text-slate-200 text-xs">'+h(id)+'</code><button class="admrm ghost !px-2 !py-0.5 text-xs" data-id="'+h(id)+'">✕</button></li>';
+        }
+        html += '</ul>';
+      }
+      el('adminlist').innerHTML = html;
+      var sel = el('admin-player'); sel.innerHTML='';
+      if(d.players && d.players.length){
+        for(var j=0;j<d.players.length;j++){ var p=d.players[j]; var o=document.createElement('option'); o.value=p.userid; o.textContent=p.name+' ('+p.userid+')'; sel.appendChild(o); }
+        el('btn-admin-add-player').disabled=false;
+      } else {
+        var o2=document.createElement('option'); o2.value=''; o2.textContent=t(d.running?'admin_no_players':'admin_need_running'); sel.appendChild(o2);
+        el('btn-admin-add-player').disabled=true;
+      }
+    }catch(e){ el('adminlist').innerHTML = '<span class="warn">✗ '+h(e.message)+'</span>'; }
+  }
+  async function doAddAdmin(id){
+    if(!id) return;
+    try{ var r = await api('/api/admins','POST',{action:'add', id:id}); toast(t('admin_added')+' ('+r.note+')'); loadAdmins(); }
+    catch(e){ toast('✗ '+e.message); }
+  }
+  async function doRemoveAdmin(id){
+    try{ var r = await api('/api/admins','POST',{action:'remove', id:id}); toast(t('admin_removed')+' ('+r.note+')'); loadAdmins(); }
+    catch(e){ toast('✗ '+e.message); }
+  }
+
   async function loadToken(){
     try{
       var d = await api('/api/token');
@@ -827,7 +961,7 @@ export const PAGE = `<!doctype html>
     renderSetup(); loadSetup();
     syncImportUI();
     homeStage = ''; renderHome(); renderWizard();
-    loadState(); loadStatus(); loadMods(); loadCluster(); loadServerStatus(); loadToken();
+    loadState(); loadStatus(); loadMods(); loadCluster(); loadServerStatus(); loadToken(); loadServerLog(); loadAdmins();
     try{ await api('/api/lang','POST',{language:LANG}); }catch(e){}
   }
 
@@ -890,6 +1024,11 @@ export const PAGE = `<!doctype html>
   el('btn-token-save').addEventListener('click', saveToken);
   el('btn-import').addEventListener('click', doImport);
   el('btn-mods-setup').addEventListener('click', doProvisionMods);
+  el('btn-mo-save').addEventListener('click', saveModoverrides);
+  el('mo-shard').addEventListener('change', loadModoverrides);
+  el('log-shard').addEventListener('change', loadServerLog);
+  el('btn-admin-add-player').addEventListener('click', function(){ doAddAdmin(el('admin-player').value); });
+  el('btn-admin-add-id').addEventListener('click', function(){ var v=el('admin-id').value.trim(); if(v){ doAddAdmin(v); el('admin-id').value=''; } });
   el('btn-gohome').addEventListener('click', function(){ showTab('home'); startServer(); });
   el('imp-kind').addEventListener('change', syncImportUI);
   el('imp-mode').addEventListener('change', syncImportUI);
@@ -917,6 +1056,7 @@ export const PAGE = `<!doctype html>
   document.addEventListener('click', function(e){
     var tg = e.target;
     if(tg.classList && tg.classList.contains('clsave')) saveCluster(tg.dataset.key);
+    var ab = tg.closest ? tg.closest('.admrm') : null; if(ab) doRemoveAdmin(ab.getAttribute('data-id'));
   });
 
   applyLang();
@@ -932,10 +1072,13 @@ export const PAGE = `<!doctype html>
   loadMods();
   loadServerStatus();
   loadToken();
+  loadModoverrides();
+  loadServerLog();
   syncImportUI();
   setInterval(loadState, 4000);
   setInterval(loadStatus, 6000);
   setInterval(function(){ if(!srvPolling) loadServerStatus(); }, 5000);
+  setInterval(function(){ if(TAB==='home') loadServerLog(); }, 1500);
 </script>
 </body>
 </html>`;

@@ -1,15 +1,32 @@
 import { randomUUID } from "node:crypto";
-import { createWriteStream, existsSync, mkdirSync, rmSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { basename, join } from "node:path";
 import type { BotApp } from "../app.js";
 import { type AppConfig, missingRequired, saveConfig } from "../config.js";
+import { addAdmin, isValidAdminId, readAdminList, removeAdmin } from "../dst/adminList.js";
 import { archiveKind } from "../dst/archive.js";
 import { setConfig, showConfig, whitelistedKeys } from "../dst/clusterConfig.js";
 import { hasClusterToken, readClusterToken, writeClusterToken } from "../dst/clusterToken.js";
+import { modOverridesPath, shardDir } from "../dst/paths.js";
 import { appBaseDir } from "../dst/paths.js";
+import { discoverShards } from "../dst/shards.js";
 import { asLang, makeT } from "../i18n.js";
 import type { ImportSource } from "../dst/importer.js";
+
+/** รายชื่อ shard สำหรับ selector/validate: ใช้ของ manager ถ้าบอทรัน, ไม่งั้น discover จากไฟล์ */
+function shardList(app: BotApp): string[] {
+  if (app.manager) return app.manager.activeShards();
+  const dst = app.config.dst;
+  if (dst.shards && dst.shards.length > 0) return dst.shards;
+  const found = discoverShards(dst);
+  return found.length > 0 ? found : ["Master"];
+}
+
+/** เลือก shard ที่ขอ ถ้าอยู่ในรายการ ไม่งั้น fallback ตัวแรก */
+function pickShard(requested: string | null, shards: string[]): string {
+  return requested && shards.includes(requested) ? requested : (shards[0] ?? "Master");
+}
 
 /** เพดานขนาดไฟล์ที่อัปโหลด import (world อาจใหญ่ แต่กัน disk เต็มจากไฟล์เดียว) */
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024 * 1024; // 8 GB
@@ -303,6 +320,59 @@ async function handleApi(app: BotApp, req: IncomingMessage, res: ServerResponse,
   if (req.method === "POST" && path === "/api/mods/provision") {
     app.provisionMods(); // background — poll /api/mods/provision/status
     return json(res, 200, { ok: true });
+  }
+
+  // ── modoverrides.lua editor (per shard; takes effect on restart) ──
+  if (req.method === "GET" && path === "/api/modoverrides") {
+    const shards = shardList(app);
+    const q = new URLSearchParams((req.url ?? "").split("?")[1] ?? "");
+    const shard = pickShard(q.get("shard"), shards);
+    const p = modOverridesPath(config.dst, shard);
+    const exists = existsSync(p);
+    return json(res, 200, { shards, shard, exists, content: exists ? readFileSync(p, "utf8") : "" });
+  }
+  if (req.method === "POST" && path === "/api/modoverrides") {
+    const body = await readBody(req, t);
+    const shards = shardList(app);
+    const shard = s(body.shard);
+    if (!/^[A-Za-z0-9_]+$/.test(shard) || !shards.includes(shard)) {
+      return json(res, 400, { error: t("err_bad_shard") });
+    }
+    const content = typeof body.content === "string" ? body.content : "";
+    mkdirSync(shardDir(config.dst, shard), { recursive: true });
+    writeFileSync(modOverridesPath(config.dst, shard), content, "utf8");
+    return json(res, 200, { ok: true, note: t("effect_on_restart") });
+  }
+
+  // ── live server log (poll); shard=all → ทุก shard รวมตามลำดับเวลา ──
+  if (req.method === "GET" && path === "/api/logs") {
+    const shards = shardList(app);
+    const q = new URLSearchParams((req.url ?? "").split("?")[1] ?? "");
+    const requested = q.get("shard") ?? "Master";
+    const lines = Math.min(1000, Math.max(1, Number.parseInt(q.get("lines") ?? "300", 10) || 300));
+    const manager = app.manager;
+    if (!manager) return json(res, 200, { running: false, shard: requested, shards, lines: [] });
+    if (requested === "all") {
+      return json(res, 200, { running: true, shard: "all", shards, lines: manager.combinedLogs(lines) });
+    }
+    const live = manager.activeShards();
+    const shard = live.includes(requested) ? requested : (live[0] ?? "Master");
+    return json(res, 200, { running: true, shard, shards, lines: manager.logs(shard, lines) });
+  }
+
+  // ── admins (adminlist.txt) — เพิ่ม/ลบด้วย game id หรือเลือกจากผู้เล่นออนไลน์ ──
+  if (req.method === "GET" && path === "/api/admins") {
+    const players = app.manager ? await app.manager.listPlayersDetailed() : [];
+    return json(res, 200, { admins: readAdminList(config.dst), players, running: !!app.manager });
+  }
+  if (req.method === "POST" && path === "/api/admins") {
+    const body = await readBody(req, t);
+    const id = s(body.id);
+    if (body.action === "remove") {
+      return json(res, 200, { ok: true, admins: removeAdmin(config.dst, id), note: t("effect_on_restart") });
+    }
+    if (!isValidAdminId(id)) return json(res, 400, { error: t("err_bad_admin_id") });
+    return json(res, 200, { ok: true, admins: addAdmin(config.dst, id), note: t("effect_on_restart") });
   }
 
   if (req.method === "GET" && path === "/api/setup") {
