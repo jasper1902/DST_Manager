@@ -27,21 +27,38 @@ export const CONTROL_ACTIONS = [
   "backup",
   "status",
   "players",
+  "mods",
+  "logs",
+  "config",
+  "announce",
+  "configset",
+  "rollback",
+  "regenerate",
 ] as const;
 
 function buildRows(): ActionRowBuilder<ButtonBuilder>[] {
-  const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+  // แถว 1: lifecycle · แถว 2: ดูข้อมูล · แถว 3: กรอกค่า (modal) + คำสั่งอันตราย (มียืนยัน)
+  const lifecycle = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ctrl:start").setLabel("Start").setEmoji("▶️").setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId("ctrl:stop").setLabel("Stop").setEmoji("⏹️").setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId("ctrl:restart").setLabel("Restart").setEmoji("🔄").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("ctrl:save").setLabel("Save").setEmoji("💾").setStyle(ButtonStyle.Secondary),
-  );
-  const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ctrl:backup").setLabel("Backup").setEmoji("🗄️").setStyle(ButtonStyle.Secondary),
+  );
+  const info = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ctrl:status").setLabel("Status").setEmoji("📊").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ctrl:players").setLabel("Players").setEmoji("👥").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ctrl:mods").setLabel("Mods").setEmoji("🧩").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ctrl:logs").setLabel("Logs").setEmoji("📜").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ctrl:config").setLabel("Config").setEmoji("⚙️").setStyle(ButtonStyle.Secondary),
   );
-  return [row1, row2];
+  const more = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ctrl:announce").setLabel("Announce").setEmoji("📢").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("ctrl:configset").setLabel("Set config").setEmoji("📝").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ctrl:rollback").setLabel("Rollback").setEmoji("↩️").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId("ctrl:regenerate").setLabel("Regenerate").setEmoji("🔥").setStyle(ButtonStyle.Danger),
+  );
+  return [lifecycle, info, more];
 }
 
 function buildEmbed(lang: Lang): EmbedBuilder {

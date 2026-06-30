@@ -135,6 +135,42 @@ async function fetchTitles(ids: string[]): Promise<Map<string, string>> {
   return result;
 }
 
+/**
+ * ดึง file_url ของ workshop item (มีเฉพาะ "legacy item" — ของก้อน zip ตรง ๆ บน Steam CDN)
+ * UGC mod ใหม่ file_url ว่าง (ใช้ระบบ UGC แยก) → คืนเฉพาะ id ที่มี file_url
+ */
+export async function fetchWorkshopFileUrls(ids: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (ids.length === 0) return out;
+
+  const form = new URLSearchParams();
+  form.set("itemcount", String(ids.length));
+  ids.forEach((id, i) => form.set(`publishedfileids[${i}]`, id));
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(STEAM_API, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: form,
+      signal: controller.signal,
+    });
+    if (!res.ok) return out;
+    const data = (await res.json()) as {
+      response?: { publishedfiledetails?: { publishedfileid?: string; file_url?: string }[] };
+    };
+    for (const d of data.response?.publishedfiledetails ?? []) {
+      if (d.publishedfileid && d.file_url) out.set(d.publishedfileid, d.file_url);
+    }
+  } catch {
+    // เน็ตหลุด/timeout → คืนเท่าที่ได้
+  } finally {
+    clearTimeout(timer);
+  }
+  return out;
+}
+
 /** resolve เลข workshop → ชื่อ โดยใช้ cache ก่อน แล้วยิง Steam เฉพาะตัวที่ยังไม่มี/หมดอายุ */
 async function resolveNames(ids: string[]): Promise<Map<string, string>> {
   const cache = await loadCache();

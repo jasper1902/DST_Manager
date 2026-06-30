@@ -61,6 +61,11 @@ export function clusterTokenPath(dst: DSTConfig): string {
   return join(clusterDir(dst), "cluster_token.txt");
 }
 
+/** path ของ adminlist.txt (รายชื่อ admin = Klei UserID/game id ต่อบรรทัด) */
+export function adminListPath(dst: DSTConfig): string {
+  return join(clusterDir(dst), "adminlist.txt");
+}
+
 /** path ของ server.ini ต่อ shard */
 export function serverIniPath(dst: DSTConfig, shard: string): string {
   return join(shardDir(dst, shard), "server.ini");
@@ -74,6 +79,38 @@ export function serverLogPath(dst: DSTConfig, shard: string): string {
 /** path ของ modoverrides.lua ต่อ shard (รายชื่อ/ค่า mod ที่เปิดใช้; อาจไม่มีไฟล์) */
 export function modOverridesPath(dst: DSTConfig, shard: string): string {
   return join(shardDir(dst, shard), "modoverrides.lua");
+}
+
+/** path ของ worldgenoverride.lua ต่อ shard (ค่าการสร้างโลก; มีผลตอน regenerate) */
+export function worldGenOverridePath(dst: DSTConfig, shard: string): string {
+  return join(shardDir(dst, shard), "worldgenoverride.lua");
+}
+
+/** โฟลเดอร์ mods ของ server install (<install>/mods) */
+export function modsDir(dst: DSTConfig): string {
+  return join(dst.installDir, "mods");
+}
+
+/** dedicated_server_mods_setup.lua — รายการ ServerModSetup ให้ engine โหลด workshop mods ตอน boot */
+export function modsSetupPath(dst: DSTConfig): string {
+  return join(modsDir(dst), "dedicated_server_mods_setup.lua");
+}
+
+/** โฟลเดอร์ม็อดที่ติดตั้งในรูปแบบ local: <install>/mods/workshop-<id> */
+export function installedModDir(dst: DSTConfig, id: string): string {
+  return join(modsDir(dst), `workshop-${id}`);
+}
+
+/**
+ * หา modinfo.lua ของม็อด (สำหรับอ่าน schema config) — ลอง mods/workshop-<id> ก่อน
+ * แล้วค่อย ugc_mods/<cluster>/Master/content/322330/<id>; คืน null ถ้ายังไม่ถูกดาวน์โหลด
+ */
+export function modInfoPath(dst: DSTConfig, id: string): string | null {
+  const candidates = [
+    join(installedModDir(dst, id), "modinfo.lua"),
+    join(dst.installDir, "ugc_mods", dst.cluster, "Master", "content", "322330", id, "modinfo.lua"),
+  ];
+  return candidates.find((p) => existsSync(p)) ?? null;
 }
 
 /**

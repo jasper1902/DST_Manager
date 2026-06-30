@@ -1,9 +1,101 @@
+import { randomUUID } from "node:crypto";
+import { createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { basename, join } from "node:path";
 import type { BotApp } from "../app.js";
 import { type AppConfig, missingRequired, saveConfig } from "../config.js";
+import { addAdmin, isValidAdminId, readAdminList, removeAdmin } from "../dst/adminList.js";
+import { archiveKind } from "../dst/archive.js";
 import { setConfig, showConfig, whitelistedKeys } from "../dst/clusterConfig.js";
 import { hasClusterToken, readClusterToken, writeClusterToken } from "../dst/clusterToken.js";
+import {
+  addMod,
+  hasMod,
+  type LuaValue,
+  parseModInfoSchema,
+  readModConfigValues,
+  removeMod,
+  setModConfig,
+  setModEnabled,
+} from "../dst/modConfig.js";
+import { getModList } from "../dst/mods.js";
+import { appBaseDir, modInfoPath, modOverridesPath, shardDir, worldGenOverridePath } from "../dst/paths.js";
+import { discoverShards } from "../dst/shards.js";
+import { applyWorldGen, readWorldGen, WORLD_SCHEMA } from "../dst/worldGen.js";
 import { asLang, makeT } from "../i18n.js";
+import type { ImportSource } from "../dst/importer.js";
+
+/** รายชื่อ shard สำหรับ selector/validate: ใช้ของ manager ถ้าบอทรัน, ไม่งั้น discover จากไฟล์ */
+function shardList(app: BotApp): string[] {
+  if (app.manager) return app.manager.activeShards();
+  const dst = app.config.dst;
+  if (dst.shards && dst.shards.length > 0) return dst.shards;
+  const found = discoverShards(dst);
+  return found.length > 0 ? found : ["Master"];
+}
+
+/** เลือก shard ที่ขอ ถ้าอยู่ในรายการ ไม่งั้น fallback ตัวแรก */
+function pickShard(requested: string | null, shards: string[]): string {
+  return requested && shards.includes(requested) ? requested : (shards[0] ?? "Master");
+}
+
+/** ม็อดนี้มี config form ได้ไหม (modinfo ถูกดาวน์โหลด + parse schema ได้) */
+function modHasConfig(app: BotApp, id: string): boolean {
+  const p = modInfoPath(app.config.dst, id);
+  if (!p) return false;
+  try {
+    return parseModInfoSchema(readFileSync(p, "utf8")).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** sanitize values จาก client ให้เหลือเฉพาะ primitive (string/number/boolean) */
+function cleanConfigValues(v: unknown): Record<string, LuaValue> {
+  const out: Record<string, LuaValue> = {};
+  if (v && typeof v === "object") {
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+      if (typeof val === "string" || typeof val === "number" || typeof val === "boolean") out[k] = val;
+    }
+  }
+  return out;
+}
+
+/** เพดานขนาดไฟล์ที่อัปโหลด import (world อาจใหญ่ แต่กัน disk เต็มจากไฟล์เดียว) */
+const MAX_UPLOAD_BYTES = 8 * 1024 * 1024 * 1024; // 8 GB
+
+function uploadsDir(): string {
+  return join(appBaseDir(), "imports", "uploads");
+}
+
+/** stream request body ลงไฟล์โดยตรง (เลี่ยง buffer ใน memory) + cap ขนาด */
+function streamToFile(req: IncomingMessage, dest: string, maxBytes: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const ws = createWriteStream(dest);
+    let total = 0;
+    let aborted = false;
+    req.on("data", (c: Buffer) => {
+      total += c.length;
+      if (total > maxBytes && !aborted) {
+        aborted = true;
+        ws.destroy();
+        req.destroy();
+        try {
+          rmSync(dest, { force: true });
+        } catch {
+          // ignore
+        }
+        reject(new Error("upload เกินขนาดที่อนุญาต"));
+      }
+    });
+    req.on("error", reject);
+    ws.on("error", reject);
+    ws.on("finish", () => {
+      if (!aborted) resolve();
+    });
+    req.pipe(ws);
+  });
+}
 
 /**
  * Web server — entry point หลัก (รันตลอด) ครอบ BotApp
@@ -200,6 +292,43 @@ async function handleApi(app: BotApp, req: IncomingMessage, res: ServerResponse,
     return json(res, 200, { ok: true });
   }
 
+  // ── import world ──
+  if (req.method === "GET" && path === "/api/import/status") {
+    return json(res, 200, app.importStatus());
+  }
+  if (req.method === "POST" && path === "/api/import/upload") {
+    // ชื่อไฟล์ (เพื่อรู้สกุล .zip/.tar.gz) ส่งมาทาง header
+    const name = String(req.headers["x-import-filename"] ?? "");
+    if (!archiveKind(name)) {
+      return json(res, 400, { error: t("err_import_bad_archive") });
+    }
+    const ext = name.toLowerCase().endsWith(".zip") ? ".zip" : name.toLowerCase().endsWith(".tgz") ? ".tgz" : ".tar.gz";
+    mkdirSync(uploadsDir(), { recursive: true });
+    const uploadId = `${randomUUID()}${ext}`;
+    await streamToFile(req, join(uploadsDir(), uploadId), MAX_UPLOAD_BYTES);
+    return json(res, 200, { ok: true, uploadId });
+  }
+  if (req.method === "POST" && path === "/api/import") {
+    const body = await readBody(req, t);
+    const kind = body.kind === "folder" ? "folder" : "archive";
+    let source: ImportSource;
+    if (kind === "archive") {
+      const uploadId = s(body.uploadId);
+      if (uploadId === "" || basename(uploadId) !== uploadId) return json(res, 400, { error: t("err_import_bad_upload") });
+      const file = join(uploadsDir(), uploadId);
+      if (!existsSync(file)) return json(res, 404, { error: t("err_import_upload_missing") });
+      source = { kind: "archive", path: file };
+    } else {
+      const folder = s(body.path);
+      if (folder === "") return json(res, 400, { error: t("err_import_no_path") });
+      source = { kind: "folder", path: folder };
+    }
+    const mode = body.mode === "no-mods" ? "no-mods" : "full";
+    const regenerate = body.regenerate === true;
+    app.importWorld(source, { mode, regenerate }); // throws ถ้าบอทยังไม่หยุด/กำลัง import
+    return json(res, 200, { ok: true });
+  }
+
   // ── cluster_token.txt (จำเป็นต่อการ start server) ──
   if (req.method === "GET" && path === "/api/token") {
     return json(res, 200, {
@@ -215,6 +344,143 @@ async function handleApi(app: BotApp, req: IncomingMessage, res: ServerResponse,
     if (token === "") return json(res, 400, { error: t("err_token_empty") });
     writeClusterToken(config.dst, token);
     return json(res, 200, { ok: true, hasToken: true, note: t("token_saved") });
+  }
+
+  // ── ติดตั้ง/ดาวน์โหลดม็อดของ cluster ปัจจุบัน ──
+  if (req.method === "GET" && path === "/api/mods/provision/status") {
+    return json(res, 200, app.modStatus());
+  }
+  if (req.method === "POST" && path === "/api/mods/provision") {
+    app.provisionMods(); // background — poll /api/mods/provision/status
+    return json(res, 200, { ok: true });
+  }
+
+  // ── modoverrides.lua editor (per shard; takes effect on restart) ──
+  if (req.method === "GET" && path === "/api/modoverrides") {
+    const shards = shardList(app);
+    const q = new URLSearchParams((req.url ?? "").split("?")[1] ?? "");
+    const shard = pickShard(q.get("shard"), shards);
+    const p = modOverridesPath(config.dst, shard);
+    const exists = existsSync(p);
+    return json(res, 200, { shards, shard, exists, content: exists ? readFileSync(p, "utf8") : "" });
+  }
+  if (req.method === "POST" && path === "/api/modoverrides") {
+    const body = await readBody(req, t);
+    const shards = shardList(app);
+    const shard = s(body.shard);
+    if (!/^[A-Za-z0-9_]+$/.test(shard) || !shards.includes(shard)) {
+      return json(res, 400, { error: t("err_bad_shard") });
+    }
+    const content = typeof body.content === "string" ? body.content : "";
+    mkdirSync(shardDir(config.dst, shard), { recursive: true });
+    writeFileSync(modOverridesPath(config.dst, shard), content, "utf8");
+    return json(res, 200, { ok: true, note: t("effect_on_restart") });
+  }
+
+  // ── mods manager (friendly): list / toggle / add / remove + per-mod config ──
+  if (req.method === "GET" && path === "/api/mods/manage") {
+    const shards = shardList(app);
+    const q = new URLSearchParams((req.url ?? "").split("?")[1] ?? "");
+    const shard = pickShard(q.get("shard"), shards);
+    const mods = (await getModList(config.dst, [shard])) ?? [];
+    const list = mods.map((m) => ({ id: m.id, name: m.name, enabled: m.enabled, url: m.url, hasConfig: modHasConfig(app, m.id) }));
+    return json(res, 200, { shards, shard, mods: list });
+  }
+  if (req.method === "POST" && path === "/api/mods/manage") {
+    const body = await readBody(req, t);
+    const shards = shardList(app);
+    const shard = s(body.shard);
+    if (!/^[A-Za-z0-9_]+$/.test(shard) || !shards.includes(shard)) return json(res, 400, { error: t("err_bad_shard") });
+    const id = s(body.id);
+    if (!/^\d+$/.test(id)) return json(res, 400, { error: t("err_bad_mod_id") });
+    const p = modOverridesPath(config.dst, shard);
+    let text = existsSync(p) ? readFileSync(p, "utf8") : "";
+    if (body.action === "add") text = addMod(text, id);
+    else if (body.action === "remove") text = removeMod(text, id);
+    else if (body.action === "toggle") text = setModEnabled(text, id, body.enabled === true);
+    else return json(res, 400, { error: t("err_bad_shard") });
+    mkdirSync(shardDir(config.dst, shard), { recursive: true });
+    writeFileSync(p, text, "utf8");
+    return json(res, 200, { ok: true, note: t("effect_on_restart") });
+  }
+  if (req.method === "GET" && path === "/api/mods/config") {
+    const shards = shardList(app);
+    const q = new URLSearchParams((req.url ?? "").split("?")[1] ?? "");
+    const shard = pickShard(q.get("shard"), shards);
+    const id = q.get("id") ?? "";
+    if (!/^\d+$/.test(id)) return json(res, 400, { error: t("err_bad_mod_id") });
+    const mp = modInfoPath(config.dst, id);
+    const schema = mp ? parseModInfoSchema(readFileSync(mp, "utf8")) : [];
+    const op = modOverridesPath(config.dst, shard);
+    const values = existsSync(op) ? readModConfigValues(readFileSync(op, "utf8"), id) : {};
+    return json(res, 200, { id, downloaded: mp !== null, schema, values });
+  }
+  if (req.method === "POST" && path === "/api/mods/config") {
+    const body = await readBody(req, t);
+    const shards = shardList(app);
+    const shard = s(body.shard);
+    if (!/^[A-Za-z0-9_]+$/.test(shard) || !shards.includes(shard)) return json(res, 400, { error: t("err_bad_shard") });
+    const id = s(body.id);
+    if (!/^\d+$/.test(id)) return json(res, 400, { error: t("err_bad_mod_id") });
+    const p = modOverridesPath(config.dst, shard);
+    let text = existsSync(p) ? readFileSync(p, "utf8") : "";
+    if (!hasMod(text, id)) text = addMod(text, id);
+    text = setModConfig(text, id, cleanConfigValues(body.values));
+    mkdirSync(shardDir(config.dst, shard), { recursive: true });
+    writeFileSync(p, text, "utf8");
+    return json(res, 200, { ok: true, note: t("effect_on_restart") });
+  }
+
+  // ── world settings editor (worldgenoverride.lua) — มีผลตอน regenerate ──
+  if (req.method === "GET" && path === "/api/worldgen") {
+    const shards = shardList(app);
+    const q = new URLSearchParams((req.url ?? "").split("?")[1] ?? "");
+    const shard = pickShard(q.get("shard"), shards);
+    const p = worldGenOverridePath(config.dst, shard);
+    const data = readWorldGen(existsSync(p) ? readFileSync(p, "utf8") : null);
+    return json(res, 200, { shards, shard, schema: WORLD_SCHEMA, values: data.overrides, overrideEnabled: data.overrideEnabled });
+  }
+  if (req.method === "POST" && path === "/api/worldgen") {
+    const body = await readBody(req, t);
+    const shards = shardList(app);
+    const shard = s(body.shard);
+    if (!/^[A-Za-z0-9_]+$/.test(shard) || !shards.includes(shard)) return json(res, 400, { error: t("err_bad_shard") });
+    const p = worldGenOverridePath(config.dst, shard);
+    const prev = existsSync(p) ? readFileSync(p, "utf8") : null;
+    mkdirSync(shardDir(config.dst, shard), { recursive: true });
+    writeFileSync(p, applyWorldGen(prev, cleanConfigValues(body.values), body.overrideEnabled !== false), "utf8");
+    return json(res, 200, { ok: true, note: t("effect_on_regenerate") });
+  }
+
+  // ── live server log (poll); shard=all → ทุก shard รวมตามลำดับเวลา ──
+  if (req.method === "GET" && path === "/api/logs") {
+    const shards = shardList(app);
+    const q = new URLSearchParams((req.url ?? "").split("?")[1] ?? "");
+    const requested = q.get("shard") ?? "Master";
+    const lines = Math.min(1000, Math.max(1, Number.parseInt(q.get("lines") ?? "300", 10) || 300));
+    const manager = app.manager;
+    if (!manager) return json(res, 200, { running: false, shard: requested, shards, lines: [] });
+    if (requested === "all") {
+      return json(res, 200, { running: true, shard: "all", shards, lines: manager.combinedLogs(lines) });
+    }
+    const live = manager.activeShards();
+    const shard = live.includes(requested) ? requested : (live[0] ?? "Master");
+    return json(res, 200, { running: true, shard, shards, lines: manager.logs(shard, lines) });
+  }
+
+  // ── admins (adminlist.txt) — เพิ่ม/ลบด้วย game id หรือเลือกจากผู้เล่นออนไลน์ ──
+  if (req.method === "GET" && path === "/api/admins") {
+    const players = app.manager ? await app.manager.listPlayersDetailed() : [];
+    return json(res, 200, { admins: readAdminList(config.dst), players, running: !!app.manager });
+  }
+  if (req.method === "POST" && path === "/api/admins") {
+    const body = await readBody(req, t);
+    const id = s(body.id);
+    if (body.action === "remove") {
+      return json(res, 200, { ok: true, admins: removeAdmin(config.dst, id), note: t("effect_on_restart") });
+    }
+    if (!isValidAdminId(id)) return json(res, 400, { error: t("err_bad_admin_id") });
+    return json(res, 200, { ok: true, admins: addAdmin(config.dst, id), note: t("effect_on_restart") });
   }
 
   if (req.method === "GET" && path === "/api/setup") {

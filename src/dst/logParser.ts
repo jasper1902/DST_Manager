@@ -80,6 +80,18 @@ export function parsePlayerRow(line: string): string | null {
   return m?.[2] ? m[2].trim() : null;
 }
 
+/** ผู้เล่นออนไลน์พร้อม Klei UserID (game id, KU_…) สำหรับเพิ่ม/ลบ admin */
+export interface PlayerDetail {
+  userid: string;
+  name: string;
+}
+
+/** ดึง userid (KU_) + ชื่อ จากบรรทัดผลของ c_listallplayers */
+export function parsePlayerDetail(line: string): PlayerDetail | null {
+  const m = line.match(PATTERNS.playerRow);
+  return m?.[1] && m?.[2] ? { userid: m[1].trim(), name: m[2].trim() } : null;
+}
+
 export interface WorldInfo {
   /** วันในเกม (null = parse ไม่ได้/TheWorld ยังไม่พร้อม) */
   day: number | null;
