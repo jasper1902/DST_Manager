@@ -178,6 +178,7 @@ const MESSAGES = {
   setup_saved: { en: "Saved", th: "บันทึกแล้ว" },
   setup_saved_restart: { en: "Saved — restart the bot to apply", th: "บันทึกแล้ว — กด restart bot เพื่อใช้ค่าใหม่" },
   effect_on_restart: { en: "takes effect on server restart", th: "มีผลตอน restart server" },
+  effect_on_regenerate: { en: "takes effect only when the world is regenerated", th: "มีผลเฉพาะตอนสร้างโลกใหม่ (regenerate)" },
   bot_not_running: { en: "the bot isn't running", th: "บอทยังไม่ได้รัน" },
   ctrl_start: { en: "start requested", th: "สั่ง start แล้ว" },
   ctrl_stop: { en: "DST server stopped", th: "ปิด DST server แล้ว" },

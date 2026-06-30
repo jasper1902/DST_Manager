@@ -285,6 +285,19 @@ export const PAGE = `<!doctype html>
     </div>
 
     <div class="card">
+      <h2><span data-i18n="sec_worldgen">🌍 World settings (worldgenoverride.lua)</span> <span class="muted normal-case tracking-normal font-normal" data-i18n="sec_worldgen_note">(applies only when the world is regenerated)</span></h2>
+      <div class="controls mb-2">
+        <span class="text-sm text-slate-400" data-i18n="wg_shard">Shard:</span>
+        <select id="wg-shard"></select>
+        <label class="flex items-center gap-1.5 text-[13px] text-slate-400"><input id="wg-enabled" type="checkbox"> <span data-i18n="wg_enabled">enable overrides</span></label>
+      </div>
+      <div id="wg-form" class="text-sm text-slate-400">—</div>
+      <div class="controls mt-2">
+        <button id="btn-wg-save" class="ok" data-i18n="wg_save">💾 Save world settings</button>
+      </div>
+    </div>
+
+    <div class="card">
       <h2><span data-i18n="sec_admins">👑 Admins (adminlist.txt)</span> <span class="muted normal-case tracking-normal font-normal" data-i18n="sec_admins_note">(in-game admins — takes effect on restart)</span></h2>
       <div id="adminlist" class="text-slate-400 text-sm mb-3">—</div>
       <div class="row">
@@ -351,6 +364,8 @@ export const PAGE = `<!doctype html>
       sec_modoverrides: '🧩 Mod config (modoverrides.lua)', sec_modoverrides_note: '(Lua — takes effect on restart)',
       mo_shard: 'Shard:', btn_save_modoverrides: '💾 Save modoverrides.lua',
       mo_saved: '✓ modoverrides.lua saved', mo_load_err: "Can't read modoverrides.lua: ",
+      sec_worldgen: '🌍 World settings (worldgenoverride.lua)', sec_worldgen_note: '(applies only when the world is regenerated)',
+      wg_shard: 'Shard:', wg_enabled: 'enable overrides', wg_save: '💾 Save world settings', wg_saved: '✓ world settings saved',
       sec_serverlog: '📜 Server log (live)', sec_serverlog_note: '(auto-refreshing)',
       log_shard: 'Shard:', log_follow: 'follow newest', log_not_running: 'Server is not running', log_all: 'All shards',
       sec_admins: '👑 Admins (adminlist.txt)', sec_admins_note: '(in-game admins — takes effect on restart)',
@@ -434,6 +449,8 @@ export const PAGE = `<!doctype html>
       sec_modoverrides: '🧩 ตั้งค่าม็อด (modoverrides.lua)', sec_modoverrides_note: '(Lua — มีผลตอน restart)',
       mo_shard: 'Shard:', btn_save_modoverrides: '💾 บันทึก modoverrides.lua',
       mo_saved: '✓ บันทึก modoverrides.lua แล้ว', mo_load_err: 'อ่าน modoverrides.lua ไม่ได้: ',
+      sec_worldgen: '🌍 ตั้งค่าโลก (worldgenoverride.lua)', sec_worldgen_note: '(มีผลเฉพาะตอนสร้างโลกใหม่ regenerate)',
+      wg_shard: 'Shard:', wg_enabled: 'เปิดใช้ override', wg_save: '💾 บันทึกตั้งค่าโลก', wg_saved: '✓ บันทึกตั้งค่าโลกแล้ว',
       sec_serverlog: '📜 Log server (สด)', sec_serverlog_note: '(รีเฟรชอัตโนมัติ)',
       log_shard: 'Shard:', log_follow: 'ตามล่าสุด', log_not_running: 'server ไม่ได้รันอยู่', log_all: 'ทุก shard',
       sec_admins: '👑 Admin (adminlist.txt)', sec_admins_note: '(admin ในเกม — มีผลตอน restart)',
@@ -492,7 +509,7 @@ export const PAGE = `<!doctype html>
     localStorage.setItem('dstTab', name);
     secs.forEach(function(s){ s.classList.toggle('hidden', s.getAttribute('data-tab')!==name); });
     document.querySelectorAll('#tabs .tab').forEach(function(b){ b.classList.toggle('active', b.getAttribute('data-tab')===name); });
-    if(name==='advanced'){ loadAdmins(); loadModsManager(); } // refresh admin + mods manager when opening Advanced
+    if(name==='advanced'){ loadAdmins(); loadModsManager(); loadWorldGen(); } // refresh admin + mods manager + world settings when opening Advanced
   }
 
   var TKEY = 'dstToken';
@@ -797,6 +814,36 @@ export const PAGE = `<!doctype html>
     catch(e){ toast('✗ '+e.message); }
   }
 
+  // ── world settings (worldgenoverride.lua) ──
+  async function loadWorldGen(){
+    try{
+      var sel = el('wg-shard'); var shard = sel.value;
+      var d = await api('/api/worldgen' + (shard?('?shard='+encodeURIComponent(shard)):''));
+      if(sel.options.length===0) fillShardSelect(sel, d.shards, d.shard);
+      el('wg-enabled').checked = !!d.overrideEnabled;
+      var cur = d.values || {};
+      var html = '';
+      for(var g=0; g<d.schema.length; g++){ var grp=d.schema[g];
+        html += '<h3>'+h(grp.group)+'</h3>';
+        for(var i=0;i<grp.options.length;i++){ var o=grp.options[i];
+          var selv = (o.name in cur) ? String(cur[o.name]) : 'default';
+          html += '<div class="row"><label title="'+h(o.name)+'">'+h(o.label)+'</label><select class="wgopt" data-name="'+h(o.name)+'">';
+          for(var j=0;j<o.options.length;j++){ var c=o.options[j]; var v=String(c.data);
+            html += '<option value="'+h(v)+'"'+(selv===v?' selected':'')+'>'+h(c.description)+'</option>';
+          }
+          html += '</select></div>';
+        }
+      }
+      el('wg-form').innerHTML = html;
+    }catch(e){ el('wg-form').innerHTML = '<span class="warn">✗ '+h(e.message)+'</span>'; }
+  }
+  async function saveWorldGen(){
+    var values = {};
+    document.querySelectorAll('#wg-form .wgopt').forEach(function(s){ values[s.getAttribute('data-name')] = s.value; });
+    try{ var r = await api('/api/worldgen','POST',{shard:el('wg-shard').value, values:values, overrideEnabled:el('wg-enabled').checked}); toast(t('wg_saved')+' ('+r.note+')'); }
+    catch(e){ toast('✗ '+e.message); }
+  }
+
   // ── live server log (poll) — shard "all" = ทุก shard รวมกัน (ดีฟอลต์) ──
   async function loadServerLog(){
     try{
@@ -1037,7 +1084,7 @@ export const PAGE = `<!doctype html>
     renderSetup(); loadSetup();
     syncImportUI();
     homeStage = ''; renderHome(); renderWizard();
-    loadState(); loadStatus(); loadMods(); loadCluster(); loadServerStatus(); loadToken(); loadServerLog(); loadAdmins(); loadModsManager();
+    loadState(); loadStatus(); loadMods(); loadCluster(); loadServerStatus(); loadToken(); loadServerLog(); loadAdmins(); loadModsManager(); loadWorldGen();
     try{ await api('/api/lang','POST',{language:LANG}); }catch(e){}
   }
 
@@ -1102,6 +1149,8 @@ export const PAGE = `<!doctype html>
   el('btn-mods-setup').addEventListener('click', doProvisionMods);
   el('btn-mo-save').addEventListener('click', saveModoverrides);
   el('mo-shard').addEventListener('change', loadModoverrides);
+  el('btn-wg-save').addEventListener('click', saveWorldGen);
+  el('wg-shard').addEventListener('change', loadWorldGen);
   el('log-shard').addEventListener('change', loadServerLog);
   el('btn-admin-add-player').addEventListener('click', function(){ doAddAdmin(el('admin-player').value); });
   el('btn-admin-add-id').addEventListener('click', function(){ var v=el('admin-id').value.trim(); if(v){ doAddAdmin(v); el('admin-id').value=''; } });

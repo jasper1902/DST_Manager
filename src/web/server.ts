@@ -19,8 +19,9 @@ import {
   setModEnabled,
 } from "../dst/modConfig.js";
 import { getModList } from "../dst/mods.js";
-import { appBaseDir, modInfoPath, modOverridesPath, shardDir } from "../dst/paths.js";
+import { appBaseDir, modInfoPath, modOverridesPath, shardDir, worldGenOverridePath } from "../dst/paths.js";
 import { discoverShards } from "../dst/shards.js";
+import { applyWorldGen, readWorldGen, WORLD_SCHEMA } from "../dst/worldGen.js";
 import { asLang, makeT } from "../i18n.js";
 import type { ImportSource } from "../dst/importer.js";
 
@@ -428,6 +429,27 @@ async function handleApi(app: BotApp, req: IncomingMessage, res: ServerResponse,
     mkdirSync(shardDir(config.dst, shard), { recursive: true });
     writeFileSync(p, text, "utf8");
     return json(res, 200, { ok: true, note: t("effect_on_restart") });
+  }
+
+  // ── world settings editor (worldgenoverride.lua) — มีผลตอน regenerate ──
+  if (req.method === "GET" && path === "/api/worldgen") {
+    const shards = shardList(app);
+    const q = new URLSearchParams((req.url ?? "").split("?")[1] ?? "");
+    const shard = pickShard(q.get("shard"), shards);
+    const p = worldGenOverridePath(config.dst, shard);
+    const data = readWorldGen(existsSync(p) ? readFileSync(p, "utf8") : null);
+    return json(res, 200, { shards, shard, schema: WORLD_SCHEMA, values: data.overrides, overrideEnabled: data.overrideEnabled });
+  }
+  if (req.method === "POST" && path === "/api/worldgen") {
+    const body = await readBody(req, t);
+    const shards = shardList(app);
+    const shard = s(body.shard);
+    if (!/^[A-Za-z0-9_]+$/.test(shard) || !shards.includes(shard)) return json(res, 400, { error: t("err_bad_shard") });
+    const p = worldGenOverridePath(config.dst, shard);
+    const prev = existsSync(p) ? readFileSync(p, "utf8") : null;
+    mkdirSync(shardDir(config.dst, shard), { recursive: true });
+    writeFileSync(p, applyWorldGen(prev, cleanConfigValues(body.values), body.overrideEnabled !== false), "utf8");
+    return json(res, 200, { ok: true, note: t("effect_on_regenerate") });
   }
 
   // ── live server log (poll); shard=all → ทุก shard รวมตามลำดับเวลา ──

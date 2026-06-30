@@ -81,6 +81,11 @@ export function modOverridesPath(dst: DSTConfig, shard: string): string {
   return join(shardDir(dst, shard), "modoverrides.lua");
 }
 
+/** path ของ worldgenoverride.lua ต่อ shard (ค่าการสร้างโลก; มีผลตอน regenerate) */
+export function worldGenOverridePath(dst: DSTConfig, shard: string): string {
+  return join(shardDir(dst, shard), "worldgenoverride.lua");
+}
+
 /** โฟลเดอร์ mods ของ server install (<install>/mods) */
 export function modsDir(dst: DSTConfig): string {
   return join(dst.installDir, "mods");
